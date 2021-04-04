@@ -1,26 +1,27 @@
 package me.hufman.androidautoidrive.notifications
 
+import android.annotation.SuppressLint
 import android.app.Notification
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import android.widget.TextView
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.MutableLiveData
+import me.hufman.androidautoidrive.CarConnectionListener
 import me.hufman.androidautoidrive.UnicodeCleaner
 import me.hufman.androidautoidrive.notifications.CarNotificationControllerIntent.Companion.INTENT_INTERACTION
-import me.hufman.androidautoidrive.notifications.ParseNotification.dumpNotification
-import me.hufman.androidautoidrive.notifications.ParseNotification.shouldPopupNotification
-import me.hufman.androidautoidrive.notifications.ParseNotification.shouldShowNotification
-import me.hufman.androidautoidrive.notifications.ParseNotification.summarizeNotification
+import me.hufman.androidautoidrive.notifications.NotificationParser.Companion.dumpNotification
 import me.hufman.androidautoidrive.phoneui.UIState
-import me.hufman.androidautoidrive.phoneui.MainActivity
-import me.hufman.idriveconnectionkit.android.IDriveConnectionListener
+import me.hufman.idriveconnectionkit.android.IDriveConnectionReceiver
 
 fun Notification.isGroupSummary(): Boolean {
 	val FLAG_GROUP_SUMMARY = 0x00000200     // hard-coded to work on old SDK
@@ -32,8 +33,15 @@ class NotificationListenerServiceImpl: NotificationListenerService() {
 		const val TAG = "IDriveNotifications"
 		const val LOG_NOTIFICATIONS = false
 		const val INTENT_REQUEST_DATA = "me.hufman.androidaudoidrive.PhoneNotificationUpdate.REQUEST_DATA"
+
+		private val _serviceState = MutableLiveData(false)
+		val serviceState = _serviceState as LiveData<Boolean>
 	}
 
+	val iDriveConnectionReceiver = IDriveConnectionReceiver()       // watches connection state
+	val carConnectionReceiver = CarConnectionListener()             // starts MainService
+
+	val notificationParser by lazy { NotificationParser.getInstance(this) }
 	val carController = NotificationUpdaterControllerIntent(this)
 	var carNotificationReceiver = CarNotificationControllerIntent.Receiver(CarNotificationControllerListener(this))
 	val interactionListener = NotificationInteractionListener(carNotificationReceiver, carController)
@@ -52,31 +60,45 @@ class NotificationListenerServiceImpl: NotificationListenerService() {
 		// load the emoji dictionary
 		UnicodeCleaner.init(this)
 
+		// car connection status listeners
+		// since we are a background service running all the time,
+		// this is a handy way to listen to the car connection announcement
+		// especially with Connected Classic, which doesn't have CarAPI registration
+		iDriveConnectionReceiver.subscribe(this)
+		carConnectionReceiver.register(this)
+
+		// car app listeners
 		Log.i(TAG, "Registering CarNotificationInteraction listeners")
 		carNotificationReceiver.register(this, broadcastReceiver)
 		this.registerReceiver(broadcastReceiver, IntentFilter(INTENT_REQUEST_DATA))
-
-		ParseNotification.notificationManager = getSystemService(NotificationManager::class.java)
 	}
 
 	override fun onDestroy() {
-		ParseNotification.notificationManager = null
 		super.onDestroy()
 		try {
 			this.unregisterReceiver(broadcastReceiver)
+		} catch (e: Exception) {}
+		try {
+			iDriveConnectionReceiver.unsubscribe(this)
+		} catch (e: Exception) {}
+		try {
+			carConnectionReceiver.unregister(this)
 		} catch (e: Exception) {}
 	}
 
 	override fun onListenerConnected() {
 		super.onListenerConnected()
-		UIState.notificationListenerConnected = true
-		sendBroadcast(Intent(MainActivity.INTENT_REDRAW))
+		_serviceState.value = true
 
 		updateNotificationList()
 	}
 
 	override fun onListenerDisconnected() {
-		UIState.notificationListenerConnected = false
+		_serviceState.value = false
+
+		// clear the list in the car
+		NotificationsState.replaceNotifications(emptyList())
+		carController.onUpdatedList()
 	}
 
 	override fun onNotificationRemoved(sbn: StatusBarNotification?, rankingMap: RankingMap?) {
@@ -88,7 +110,7 @@ class NotificationListenerServiceImpl: NotificationListenerService() {
 	}
 
 	override fun onNotificationPosted(sbn: StatusBarNotification?, rankingMap: RankingMap?) {
-		if (!IDriveConnectionListener.isConnected) return
+		if (!iDriveConnectionReceiver.isConnected) return
 		val ranking = if (sbn != null && rankingMap != null) {
 			rankingMap.getRanking(sbn.key, this.ranking)
 			ranking
@@ -99,7 +121,7 @@ class NotificationListenerServiceImpl: NotificationListenerService() {
 		}
 		updateNotificationList()
 
-		val shouldPopup = shouldPopupNotification(sbn, ranking)
+		val shouldPopup = notificationParser.shouldPopupNotification(sbn, ranking)
 		if (sbn != null && shouldPopup) {
 			carController.onNewNotification(sbn.key)
 		}
@@ -108,12 +130,12 @@ class NotificationListenerServiceImpl: NotificationListenerService() {
 	}
 
 	fun updateNotificationList() {
-		if (!IDriveConnectionListener.isConnected) return
+		if (!iDriveConnectionReceiver.isConnected) return
 		try {
 			val current = this.activeNotifications.filter {
-				shouldShowNotification(it)
+				notificationParser.shouldShowNotification(it)
 			}.map {
-				summarizeNotification(it)
+				notificationParser.summarizeNotification(it)
 			}
 			NotificationsState.replaceNotifications(current)
 		} catch (e: SecurityException) {
@@ -130,12 +152,21 @@ class NotificationListenerServiceImpl: NotificationListenerService() {
 		override fun action(key: String, actionName: String) {
 			try {
 				val notification = listenerService.activeNotifications.find { it.key == key }
-				val intent = notification?.notification?.actions?.find { it.title == actionName }?.actionIntent
-				intent?.send()
+				val customViewTemplate = notification?.notification?.getContentView()
+				if (customViewTemplate != null) {
+					val customView = customViewTemplate.apply(listenerService, null)
+					customView.collectChildren().filterIsInstance<TextView>()
+						.filter { it.isClickable }
+						.firstOrNull { it.text == key }?.performClick()
+				} else {
+					val intent = notification?.notification?.actions?.find { it.title == actionName }?.actionIntent
+					intent?.send()
+				}
 			} catch (e: SecurityException) {
 				Log.w(TAG, "Unable to send action $actionName to notification $key: $e")
 			}
 		}
+		@SuppressLint("WrongConstant")
 		override fun reply(key: String, actionName: String, reply: String) {
 			try {
 				val notification = listenerService.activeNotifications.find { it.key == key }
@@ -149,7 +180,9 @@ class NotificationListenerServiceImpl: NotificationListenerService() {
 					}
 					val intent = Intent().addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
 					RemoteInput.addResultsToIntent(action.remoteInputs, intent, results)
-					RemoteInput.setResultsSource(intent, RemoteInput.SOURCE_FREE_FORM_INPUT)
+					if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {   // only added in API 28
+						RemoteInput.setResultsSource(intent, RemoteInput.SOURCE_FREE_FORM_INPUT)
+					}
 					action.actionIntent.send(listenerService, 0, intent)
 				}
 			} catch (e: SecurityException) {

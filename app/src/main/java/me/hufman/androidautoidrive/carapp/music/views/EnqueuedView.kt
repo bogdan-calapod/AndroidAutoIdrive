@@ -1,20 +1,20 @@
 package me.hufman.androidautoidrive.carapp.music.views
 
 import de.bmw.idrive.BMWRemoting
-import me.hufman.androidautoidrive.GraphicsHelpers
+import me.hufman.androidautoidrive.utils.GraphicsHelpers
 import me.hufman.androidautoidrive.UnicodeCleaner
 import me.hufman.androidautoidrive.carapp.RHMIListAdapter
 import me.hufman.androidautoidrive.carapp.music.MusicImageIDs
 import me.hufman.androidautoidrive.music.MusicController
 import me.hufman.androidautoidrive.music.MusicMetadata
 import me.hufman.androidautoidrive.music.QueueMetadata
-import me.hufman.androidautoidrive.truncate
+import me.hufman.androidautoidrive.utils.truncate
 import me.hufman.idriveconnectionkit.rhmi.*
 import kotlin.math.max
 
 class EnqueuedView(val state: RHMIState, val musicController: MusicController, val graphicsHelpers: GraphicsHelpers, val musicImageIDs: MusicImageIDs) {
 	companion object {
-		//current default row width only supports 22 chars before rolling over
+		// current default row width only supports 22 chars before rolling over
 		private const val ROW_LINE_MAX_LENGTH = 22
 		private const val TITLE_MAX_LENGTH = 35
 
@@ -32,6 +32,8 @@ class EnqueuedView(val state: RHMIState, val musicController: MusicController, v
 	val queueImageComponent: RHMIComponent.Image
 	val titleLabelComponent: RHMIComponent.Label
 	val subtitleLabelComponent: RHMIComponent.Label
+
+	var visible = false
 	var currentSong: MusicMetadata? = null
 	val songsList = ArrayList<MusicMetadata>()
 	val songsEmptyList = RHMIModel.RaListModel.RHMIListConcrete(3)
@@ -74,6 +76,12 @@ class EnqueuedView(val state: RHMIState, val musicController: MusicController, v
 	}
 
 	fun initWidgets(playbackView: PlaybackView) {
+		state.focusCallback = FocusCallback { focused ->
+			visible = focused
+			if (focused) {
+				show()
+			}
+		}
 		queueImageComponent.setProperty(RHMIProperty.PropertyId.WIDTH, 180)
 		titleLabelComponent.setProperty(RHMIProperty.PropertyId.CUTTYPE, 0)
 		subtitleLabelComponent.setProperty(RHMIProperty.PropertyId.CUTTYPE, 0)
@@ -105,7 +113,7 @@ class EnqueuedView(val state: RHMIState, val musicController: MusicController, v
 			listComponent.setEnabled(true)
 			listComponent.setSelectable(true)
 			songsList.addAll(songs)
-			showList()
+			showList(0)
 			listComponent.requestDataCallback = RequestDataCallback { startIndex, numRows ->
 				showList(startIndex, numRows)
 
@@ -143,6 +151,10 @@ class EnqueuedView(val state: RHMIState, val musicController: MusicController, v
 		}
 	}
 
+	fun forgetDisplayedInfo() {
+		queueMetadata = null
+	}
+
 	fun redraw() {
 		// need a full redraw if the queue is different or has been modified
 		if (musicController.getQueue() != queueMetadata) {
@@ -161,6 +173,11 @@ class EnqueuedView(val state: RHMIState, val musicController: MusicController, v
 
 			// add checkmark to new song
 			showList(playingIndex, 1)
+
+			// move the selection if the previous song was selected
+			if (oldPlayingIndex == selectedIndex) {
+				setSelectionToCurrentSong(playingIndex)
+			}
 		}
 
 		// redraw all currently visible rows if one of them has a cover art that was retrieved

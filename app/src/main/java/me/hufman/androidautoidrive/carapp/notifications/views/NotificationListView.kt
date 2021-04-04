@@ -4,20 +4,23 @@ import android.os.Handler
 import android.util.Log
 import de.bmw.idrive.BMWRemoting
 import me.hufman.androidautoidrive.*
+import me.hufman.androidautoidrive.carapp.FocusTriggerController
 import me.hufman.androidautoidrive.carapp.RHMIActionAbort
 import me.hufman.androidautoidrive.carapp.RHMIListAdapter
-import me.hufman.androidautoidrive.notifications.CarNotification
-import me.hufman.androidautoidrive.carapp.notifications.NotificationSettings
-import me.hufman.androidautoidrive.carapp.notifications.ReadoutInteractions
-import me.hufman.androidautoidrive.notifications.NotificationsState
+import me.hufman.androidautoidrive.carapp.notifications.*
 import me.hufman.androidautoidrive.carapp.notifications.TAG
+import me.hufman.androidautoidrive.notifications.CarNotification
+import me.hufman.androidautoidrive.notifications.NotificationsState
+import me.hufman.androidautoidrive.utils.GraphicsHelpers
 import me.hufman.idriveconnectionkit.rhmi.*
 import java.util.*
 
-class NotificationListView(val state: RHMIState, val phoneAppResources: PhoneAppResources, val graphicsHelpers: GraphicsHelpers, val settings: NotificationSettings, val readoutInteractions: ReadoutInteractions) {
+class NotificationListView(val state: RHMIState, val graphicsHelpers: GraphicsHelpers, val settings: NotificationSettings,
+                           val focusTriggerController: FocusTriggerController, val statusbarController: StatusbarController, val readoutInteractions: ReadoutInteractions) {
 	companion object {
-		val INTERACTION_DEBOUNCE_MS = 2000              // how long to wait after lastInteractionTime to update the list
-		val SKIPTHROUGH_THRESHOLD = 2000                // how long after an entrybutton push to allow skipping through to a current notification
+		const val INTERACTION_DEBOUNCE_MS = 2000              // how long to wait after lastInteractionTime to update the list
+		const val SKIPTHROUGH_THRESHOLD = 2000                // how long after an entrybutton push to allow skipping through to a current notification
+		const val ARRIVAL_THRESHOLD = 8000                    // how long after a new notification should it skip through
 
 		fun fits(state: RHMIState): Boolean {
 			return state is RHMIState.PlainState &&
@@ -29,9 +32,9 @@ class NotificationListView(val state: RHMIState, val phoneAppResources: PhoneApp
 
 	val notificationListView: RHMIComponent.List    // the list component of notifications
 	val settingsListView: RHMIComponent.List    // the list component of notifications
-	val notificationIconEvent: RHMIEvent.NotificationIconEvent    // to trigger the status bar icon
 
 	var visible = false                 // whether the notification list is showing
+	var firstView = true                // whether this is the first time this view is shown
 
 	var entryButtonTimestamp = 0L   // when the user pushed the entryButton
 	val timeSinceEntryButton: Long
@@ -40,10 +43,15 @@ class NotificationListView(val state: RHMIState, val phoneAppResources: PhoneApp
 	var deferredUpdate: DeferredUpdate? = null  // wrapper object to help debounce user inputs
 	var lastInteractionIndex: Int = -1       // what index the user last selected
 
+	var notificationArrivalTimestamp = 0L
+	val timeSinceNotificationArrival: Long
+		get() = System.currentTimeMillis() - notificationArrivalTimestamp
+	var mostInterestingNotification: CarNotification? = null        // most recently arrived or selected notification
+
 	val shownNotifications = Collections.synchronizedList(ArrayList<CarNotification>())   // which notifications are showing
 	val notificationListData = object: RHMIListAdapter<CarNotification>(3, shownNotifications) {
 		override fun convertRow(index: Int, item: CarNotification): Array<Any> {
-			val icon = graphicsHelpers.compress(phoneAppResources.getIconDrawable(item.icon), 48, 48)
+			val icon = item.icon?.let { graphicsHelpers.compress(it, 48, 48) } ?: ""
 			val text = "${item.title}\n${item.text.trim().split(Regex("\n")).lastOrNull() ?: ""}"
 			return arrayOf(icon, "", text)
 		}
@@ -72,37 +80,48 @@ class NotificationListView(val state: RHMIState, val phoneAppResources: PhoneApp
 	init {
 		notificationListView = state.componentsList.filterIsInstance<RHMIComponent.List>().first()
 		settingsListView = state.componentsList.filterIsInstance<RHMIComponent.List>().last()
-		notificationIconEvent = state.app.events.values.filterIsInstance<RHMIEvent.NotificationIconEvent>().first()
 	}
 
-	fun initWidgets(detailsView: DetailsView) {
+	fun initWidgets(showNotificationController: ShowNotificationController, permissionView: PermissionView) {
 		// refresh the list when we are displayed
 		state.focusCallback = FocusCallback { focused ->
 			visible = focused
-			if (focused) {
-				val focusEvent = state.app.events.values.filterIsInstance<RHMIEvent.FocusEvent>().first()
-				if (timeSinceEntryButton < SKIPTHROUGH_THRESHOLD &&
-						readoutInteractions.currentNotification != null) {
-					detailsView.selectedNotification = readoutInteractions.currentNotification
-					try {
-						focusEvent.triggerEvent(mapOf(0 to detailsView.state.id))   // skip through to details view
-						// done processing here, don't continue on to redrawing
+			if (firstView && !settings.notificationListenerConnected) {
+				focusTriggerController.focusState(permissionView.state, false)   // skip through to permissions view
+				firstView = false
+			} else if (focused) {
+				val didEntryButton = timeSinceEntryButton < SKIPTHROUGH_THRESHOLD
+				val skipThroughNotification = readoutInteractions.currentNotification ?:
+						if (timeSinceNotificationArrival < ARRIVAL_THRESHOLD) mostInterestingNotification else null
+				if (didEntryButton && skipThroughNotification != null) {
+					// don't try to skip through to a new notification again
+					notificationArrivalTimestamp = 0L
+					val success = showNotificationController.showFromFocusEvent(skipThroughNotification, false)
+					// done processing here, don't continue on to redrawing
+					if (success) {
 						return@FocusCallback
-					} catch (e: BMWRemoting.ServiceException) {
-						Log.w(TAG, "Failed to skip through to the speaking notification: $e")
 					}
 				} else {
 					// we are backing out of a details view, cancel any current readout
 					readoutInteractions.cancel()
 				}
 				// if we did not skip through, refresh:
-				hideStatusBarIcon()
 				redrawNotificationList()
 
+				// if we entered through the EntryButton, clear the statusbar icon
+				// the other way is to come from an action in the DetailsView
+				// and we want to keep the other messages in the Notification Center
+				if (didEntryButton) {
+					hideStatusBarIcon()
+				}
+
 				// if a notification is speaking, pre-select it
-				val index = shownNotifications.indexOf(readoutInteractions.currentNotification)
-				if (index >= 0) {
-					focusEvent.triggerEvent(mapOf(0 to notificationListView.id, 41 to index))
+				// otherwise pre-select the most recent notification that showed up or was selected
+				// and only if the user is freshly arriving, not backing out of a deeper view
+				val preselectedNotification = readoutInteractions.currentNotification ?: mostInterestingNotification
+				val index = shownNotifications.indexOf(preselectedNotification)
+				if (didEntryButton && index >= 0) {
+					focusTriggerController.focusComponent(notificationListView, index)
 				}
 
 				redrawSettingsList()
@@ -120,16 +139,26 @@ class NotificationListView(val state: RHMIState, val phoneAppResources: PhoneApp
 
 		notificationListView.setVisible(true)
 		notificationListView.setProperty(RHMIProperty.PropertyId.LIST_COLUMNWIDTH.id, "55,0,*")
-		notificationListView.getAction()?.asRAAction()?.rhmiActionCallback = RHMIActionListCallback { index ->
-			val notification = shownNotifications.getOrNull(index)
-			detailsView.selectedNotification = notification
-			if (notification != null) {
-				// set the list to go into the details state
-				notificationListView.getAction()?.asHMIAction()?.getTargetModel()?.asRaIntModel()?.value = detailsView.state.id
-			} else {
-				notificationListView.getAction()?.asHMIAction()?.getTargetModel()?.asRaIntModel()?.value = 0
+		notificationListView.setProperty(RHMIProperty.PropertyId.BOOKMARKABLE, true)
+		notificationListView.getAction()?.asRAAction()?.rhmiActionCallback = object: RHMIActionListCallback {
+			override fun onAction(index: Int, invokedBy: Int?) {
+				val notification = if (invokedBy != 2) {       // don't change the notification
+					shownNotifications.getOrNull(index)
+				} else {
+					showNotificationController.getSelectedNotification()
+				}
+				if (notification != null) {
+					// save this notification for future pre-selections
+					mostInterestingNotification = notification
+
+					// set the list to go into the details state
+					showNotificationController.showFromHmiAction(notificationListView.getAction()?.asHMIAction(), notification)
+				} else {
+					notificationListView.getAction()?.asHMIAction()?.getTargetModel()?.asRaIntModel()?.value = 0
+				}
 			}
 		}
+
 		notificationListView.getSelectAction()?.asRAAction()?.rhmiActionCallback = RHMIActionListCallback {
 			if (it != lastInteractionIndex) {
 				lastInteractionIndex = it
@@ -155,8 +184,6 @@ class NotificationListView(val state: RHMIState, val phoneAppResources: PhoneApp
 				throw RHMIActionAbort()
 			}
 		}
-
-		notificationIconEvent.getImageIdModel()?.asImageIdModel()?.imageId = 157
 	}
 
 	fun onCreate(handler: Handler) {
@@ -208,22 +235,16 @@ class NotificationListView(val state: RHMIState, val phoneAppResources: PhoneApp
 		settingsListView.getModel()?.value = menuSettingsListData
 	}
 
-	fun showStatusBarIcon() {
+	fun showNotification(sbn: CarNotification) {
+		mostInterestingNotification = sbn
+		notificationArrivalTimestamp = System.currentTimeMillis()
 		// a new message arrived but the window is not visible, show the icon
 		if (!visible) {
-			try {
-				notificationIconEvent.triggerEvent(mapOf(0 to true))
-			} catch (e: BMWRemoting.ServiceException) {
-				// error showing icon
-			}
-		}
-	}
-	fun hideStatusBarIcon() {
-		try {
-			notificationIconEvent.triggerEvent(mapOf(0 to false))
-		} catch (e: BMWRemoting.ServiceException) {
-			// error hiding icon
+			statusbarController.add(sbn)
 		}
 	}
 
+	fun hideStatusBarIcon() {
+		statusbarController.clear()
+	}
 }

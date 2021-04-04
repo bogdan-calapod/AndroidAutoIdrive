@@ -1,27 +1,29 @@
 package me.hufman.androidautoidrive.carapp.notifications
 
 import me.hufman.androidautoidrive.AppSettings
-import me.hufman.androidautoidrive.MutableAppSettings
+import me.hufman.androidautoidrive.MutableAppSettingsObserver
+import me.hufman.androidautoidrive.StoredList
 import me.hufman.androidautoidrive.connections.BtStatus
 
-class NotificationSettings(val capabilities: Map<String, String?>, val btStatus: BtStatus, val appSettings: MutableAppSettings) {
+class NotificationSettings(val capabilities: Map<String, String?>, val btStatus: BtStatus, val appSettings: MutableAppSettingsObserver) {
 	var callback
 		get() = appSettings.callback
 		set(value) { appSettings.callback = value }
 
+	// quick replies for input suggestions
+	val quickReplies: List<String> = StoredList(appSettings, AppSettings.KEYS.NOTIFICATIONS_QUICK_REPLIES)
+
+	// whether the notification listener service is connected
+	var notificationListenerConnected = true
+
 	// car's supported features
-	val idrive4 = capabilities["hmi.type"]?.contains("ID4") == true
 	val tts = capabilities["tts"]?.toLowerCase() == "true"
 
 	fun getSettings(): List<AppSettings.KEYS> {
-		val popupSettings = if (idrive4) {
-			listOf(
-					AppSettings.KEYS.ENABLED_NOTIFICATIONS_POPUP,
-					AppSettings.KEYS.ENABLED_NOTIFICATIONS_POPUP_PASSENGER
-			)
-		} else {
-			listOf()
-		}
+		val popupSettings = listOf(
+				AppSettings.KEYS.ENABLED_NOTIFICATIONS_POPUP,
+				AppSettings.KEYS.ENABLED_NOTIFICATIONS_POPUP_PASSENGER
+		)
 		val soundSettings = listOf(
 				AppSettings.KEYS.NOTIFICATIONS_SOUND
 		)
@@ -46,8 +48,7 @@ class NotificationSettings(val capabilities: Map<String, String?>, val btStatus:
 	}
 
 	fun shouldPopup(passengerSeated: Boolean): Boolean {
-		return idrive4 &&
-			appSettings[AppSettings.KEYS.ENABLED_NOTIFICATIONS_POPUP].toBoolean() &&
+		return appSettings[AppSettings.KEYS.ENABLED_NOTIFICATIONS_POPUP].toBoolean() &&
 			(appSettings[AppSettings.KEYS.ENABLED_NOTIFICATIONS_POPUP_PASSENGER].toBoolean() ||
 				!passengerSeated)
 	}

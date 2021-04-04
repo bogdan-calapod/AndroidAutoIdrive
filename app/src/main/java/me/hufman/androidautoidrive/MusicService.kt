@@ -1,6 +1,8 @@
 package me.hufman.androidautoidrive
 
 import android.content.Context
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.util.Log
 import de.bmw.idrive.BMWRemoting
 import me.hufman.androidautoidrive.carapp.navigation.NavigationTriggerReceiver
@@ -9,26 +11,47 @@ import me.hufman.androidautoidrive.carapp.music.MusicApp
 import me.hufman.androidautoidrive.carapp.music.MusicAppMode
 import me.hufman.androidautoidrive.carapp.music.MusicImageIDsMultimedia
 import me.hufman.androidautoidrive.carapp.music.MusicImageIDsSpotify
+import me.hufman.androidautoidrive.connections.BtStatus
 import me.hufman.androidautoidrive.music.MusicAppDiscovery
 import me.hufman.androidautoidrive.music.MusicController
+import me.hufman.androidautoidrive.utils.GraphicsHelpersAndroid
+import me.hufman.idriveconnectionkit.android.IDriveConnectionStatus
 import me.hufman.idriveconnectionkit.android.security.SecurityAccess
 
-class MusicService(val context: Context, val securityAccess: SecurityAccess, val musicAppMode: MusicAppMode) {
+class MusicService(val context: Context, val iDriveConnectionStatus: IDriveConnectionStatus, val securityAccess: SecurityAccess, val musicAppMode: MusicAppMode) {
 	var threadMusic: CarThread? = null
 	var carappMusic: MusicApp? = null
 	var navigationTriggerReceiver: NavigationTriggerReceiver? = null
+	var running = false
+
+	// watch for bluetooth audio connection changes
+	private val btConnectionCallback = BtStatus(context) {
+		// defer a bit, in case the Bluetooth Audio Sink takes a bit to create
+		threadMusic?.handler?.postDelayed({
+			setMaxBluetoothVolume()
+		}, 1000)
+		// check again in a few seconds, in case of really busy/slow phones
+		threadMusic?.handler?.postDelayed({
+			setMaxBluetoothVolume()
+		}, 3000)
+	}
 
 	fun start(): Boolean {
+		running = true
 		synchronized(this) {
-			if (threadMusic == null) {
+			if (threadMusic?.isAlive != true) {
 				threadMusic = CarThread("Music") {
+					// make sure bluetooth volume is set to max
+					btConnectionCallback.register()
+					btConnectionCallback.callback.invoke()
+
 					val handler = threadMusic?.handler ?: return@CarThread
 					val musicAppDiscovery = MusicAppDiscovery(context, handler)
 					val musicController = MusicController(context, handler)
 					var carappMusic: MusicApp? = null
 					if (musicAppMode.shouldId5Playback()) {
 						try {
-							carappMusic = MusicApp(securityAccess,
+							carappMusic = MusicApp(iDriveConnectionStatus, securityAccess,
 									CarAppAssetManager(context, "spotify"),
 									MusicImageIDsSpotify,
 									PhoneAppResourcesAndroid(context),
@@ -41,7 +64,7 @@ class MusicService(val context: Context, val securityAccess: SecurityAccess, val
 						}
 					}
 					if (carappMusic == null) {
-						carappMusic = MusicApp(securityAccess,
+						carappMusic = MusicApp(iDriveConnectionStatus, securityAccess,
 								CarAppAssetManager(context, "multimedia"),
 								MusicImageIDsMultimedia,
 								PhoneAppResourcesAndroid(context),
@@ -64,17 +87,48 @@ class MusicService(val context: Context, val securityAccess: SecurityAccess, val
 		return true
 	}
 
-	fun stop() {
-		val handler = threadMusic?.handler
-		handler?.post {
-			navigationTriggerReceiver?.unregister(context)
-			carappMusic?.musicController?.disconnectApp(pause=false)
-			carappMusic?.musicAppDiscovery?.cancelDiscovery()
-			carappMusic = null
-
-			handler.looper?.quitSafely()
+	private fun setMaxBluetoothVolume() {
+		// make sure car (a device named BMW or MINI) is connected over A2DP
+		if (!btConnectionCallback.isA2dpConnected) {
+			return
 		}
-		threadMusic = null
+
+		// make sure the A2DP audio device is present
+		// there's a slight delay between the A2DP connection and the audio sink creation
+		val audioManager = context.getSystemService(AudioManager::class.java)
+		val audioDevices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+		val btDevices = audioDevices.filter {
+			it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+		}
+		if (btDevices.isNotEmpty()) {
+			try {
+				val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+				audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, max, 0)
+			} catch (e: SecurityException) {
+				Log.w(TAG, "Unable to set Bluetooth volume", e)
+			}
+		}
+	}
+
+	fun stop() {
+		running = false
+		// post it to the thread to run after initialization finishes
+		threadMusic?.post {
+			if (!running) { // check that we do actually intend to shut down
+				btConnectionCallback.unregister()
+				navigationTriggerReceiver?.unregister(context)
+				carappMusic?.musicController?.disconnectApp(pause = false)
+				carappMusic?.musicAppDiscovery?.cancelDiscovery()
+				carappMusic = null
+				threadMusic?.quit()
+				threadMusic = null
+
+				// if we started up again during shutdown
+				if (running) {
+					start()
+				}
+			}
+		}
 	}
 
 

@@ -33,13 +33,16 @@ class CombinedMusicAppController(val controllers: List<Observable<out MusicAppCo
 	private var browseableController: MusicAppController? = null
 
 	var callback: ((MusicAppController) -> Unit)? = null
+	var onCreatedCallback: (() -> Unit)? = null
 
 	init {
 		controllers.forEach { pendingController ->
 			pendingController.subscribe { freshController ->
 				// a controller has connected/disconnected
 				if (freshController != null) {
+					onCreatedCallback?.invoke()
 					callback?.invoke(freshController)
+
 					freshController.subscribe { controller ->
 						// a controller wants to notify the UI
 						callback?.invoke(controller)
@@ -49,6 +52,12 @@ class CombinedMusicAppController(val controllers: List<Observable<out MusicAppCo
 		}
 	}
 
+	/**
+	 * Callback for when the controller is first created.
+	 */
+	fun onCreatedCallback(callback: () -> Unit) {
+		this.onCreatedCallback = callback
+	}
 
 	/**
 	 * Runs the given command against the first working of the connected controllers
@@ -206,7 +215,7 @@ class CombinedMusicAppController(val controllers: List<Observable<out MusicAppCo
 	override fun getPlaybackPosition(): PlaybackPosition {
 		return withController {
 			it.getPlaybackPosition()
-		} ?: PlaybackPosition(true, 0, 0, 0)
+		} ?: PlaybackPosition(true, false, 0, 0, 0)
 	}
 
 	override fun isSupportedAction(action: MusicAction): Boolean {

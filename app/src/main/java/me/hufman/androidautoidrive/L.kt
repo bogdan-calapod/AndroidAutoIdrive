@@ -18,6 +18,8 @@ object L {
 	var NOTIFICATION_READOUT = "Speak when viewing notifications"
 	var NOTIFICATION_READOUT_POPUP = "Speak new notifications"
 	var NOTIFICATION_READOUT_POPUP_PASSENGER = "... with a passenger"
+	var NOTIFICATION_PERMISSION_NEEDED = "This app needs to be granted Notification Access"
+	var NOTIFICATION_CENTER_APP = "This app is used to push to the car's Notification Center"
 	var READOUT_DESCRIPTION = "This app is used for readout purposes"
 
 	var MAP_ACTION_VIEWMAP = "View Full Map"
@@ -36,6 +38,9 @@ object L {
 	var MUSIC_BROWSE_ACTION_FILTER = "Filter"
 	var MUSIC_BROWSE_ACTION_SEARCH = "Search"
 	var MUSIC_BROWSE_PLAY_FROM_SEARCH = "Play From Search"
+	val MUSIC_SEARCH_RESULTS_LABEL = "Search Results"
+	val MUSIC_SEARCH_RESULTS_VIEW_FULL_RESULTS = "View Full Results"
+	val MUSIC_SEARCH_RESULTS_ELLIPSIS = "..."
 	var MUSIC_QUEUE_TITLE = "Now Playing"
 	var MUSIC_QUEUE_EMPTY = "<Empty Queue>"
 	var MUSIC_SKIP_PREVIOUS = "Back"
@@ -50,10 +55,12 @@ object L {
 
 	var MUSIC_ACTION_SEEK_BACK_5 = "Seek back 5 seconds"
 	var MUSIC_ACTION_SEEK_BACK_10 = "Seek back 10 seconds"
+	var MUSIC_ACTION_SEEK_BACK_15 = "Seek back 15 seconds"
 	var MUSIC_ACTION_SEEK_BACK_20 = "Seek back 20 seconds"
 	var MUSIC_ACTION_SEEK_BACK_60 = "Seek back 60 seconds"
 	var MUSIC_ACTION_SEEK_FORWARD_5 = "Seek forward 5 seconds"
 	var MUSIC_ACTION_SEEK_FORWARD_10 = "Seek forward 10 seconds"
+	var MUSIC_ACTION_SEEK_FORWARD_15 = "Seek forward 15 seconds"
 	var MUSIC_ACTION_SEEK_FORWARD_20 = "Seek forward 20 seconds"
 	var MUSIC_ACTION_SEEK_FORWARD_60 = "Seek forward 60 seconds"
 

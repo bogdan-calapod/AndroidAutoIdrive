@@ -2,8 +2,9 @@ package me.hufman.androidautoidrive.carapp.notifications.views
 
 import android.util.Log
 import de.bmw.idrive.BMWRemoting
-import me.hufman.androidautoidrive.GraphicsHelpers
+import me.hufman.androidautoidrive.utils.GraphicsHelpers
 import me.hufman.androidautoidrive.PhoneAppResources
+import me.hufman.androidautoidrive.carapp.FocusTriggerController
 import me.hufman.androidautoidrive.carapp.notifications.*
 import me.hufman.androidautoidrive.notifications.CarNotification
 import me.hufman.androidautoidrive.notifications.CarNotificationController
@@ -12,7 +13,9 @@ import me.hufman.idriveconnectionkit.rhmi.*
 import java.util.ArrayList
 import kotlin.math.min
 
-class DetailsView(val state: RHMIState, val phoneAppResources: PhoneAppResources, val graphicsHelpers: GraphicsHelpers, val controller: CarNotificationController, val readoutInteractions: ReadoutInteractions) {
+class DetailsView(val state: RHMIState, val phoneAppResources: PhoneAppResources, val graphicsHelpers: GraphicsHelpers,
+                  val notificationSettings: NotificationSettings, val controller: CarNotificationController,
+                  val focusTriggerController: FocusTriggerController, val statusbarController: StatusbarController, val readoutInteractions: ReadoutInteractions) {
 	companion object {
 		fun fits(state: RHMIState): Boolean {
 			return state is RHMIState.ToolbarState &&
@@ -24,9 +27,9 @@ class DetailsView(val state: RHMIState, val phoneAppResources: PhoneAppResources
 		const val MAX_LENGTH = 10000
 	}
 
-	var listViewId: Int = 0                // where to set the focus when the active notification disappears
+	var listState: RHMIState = state        // where to set the focus when the active notification disappears, linked during initWidgets
 	val iconWidget: RHMIComponent.List     // the widget to display the notification app's icon
-	val titleWidget: RHMIComponent.Label    // the widget to display the title in
+	val titleWidget: RHMIComponent.List    // the widget to display the title in
 	val listWidget: RHMIComponent.List     // the widget to display the text
 	val imageWidget: RHMIComponent.Image
 	lateinit var inputView: RHMIState
@@ -36,7 +39,7 @@ class DetailsView(val state: RHMIState, val phoneAppResources: PhoneAppResources
 
 	init {
 		iconWidget = state.componentsList.filterIsInstance<RHMIComponent.List>().first()
-		titleWidget = state.componentsList.filterIsInstance<RHMIComponent.Label>().first()
+		titleWidget = state.componentsList.filterIsInstance<RHMIComponent.List>()[1]
 		listWidget = state.componentsList.filterIsInstance<RHMIComponent.List>().first {
 			it.getModel()?.modelType == "Richtext"
 		}
@@ -57,13 +60,18 @@ class DetailsView(val state: RHMIState, val phoneAppResources: PhoneAppResources
 				if (selectedNotification != null) {
 					readoutInteractions.triggerDisplayReadout(selectedNotification)
 				}
-			} else {
-				selectedNotification = null
+			}
+		}
+		state.visibleCallback = VisibleCallback { visible ->
+			if (!visible) {
+				hide()
 			}
 		}
 
 		state.setProperty(RHMIProperty.PropertyId.HMISTATE_TABLETYPE, 3)
 		state.componentsList.forEach { it.setVisible(false) }
+		// separator below the title
+		state.componentsList.filterIsInstance<RHMIComponent.Separator>().forEach { it.setVisible(true) }
 		iconWidget.apply {
 			// app icon and notification title
 			setVisible(true)
@@ -72,8 +80,10 @@ class DetailsView(val state: RHMIState, val phoneAppResources: PhoneAppResources
 			setProperty(RHMIProperty.PropertyId.LIST_COLUMNWIDTH.id, "55,0,*")
 		}
 		titleWidget.apply {
+			// the title and any side icon
 			setVisible(true)
 			setEnabled(true)
+			setSelectable(true)
 		}
 		imageWidget.apply {
 			setProperty(RHMIProperty.PropertyId.WIDTH.id, 400)
@@ -86,7 +96,7 @@ class DetailsView(val state: RHMIState, val phoneAppResources: PhoneAppResources
 			setSelectable(true)
 		}
 
-		var buttons = ArrayList(state.toolbarComponentsList).filterIsInstance<RHMIComponent.ToolbarButton>().filter { it.action > 0}
+		val buttons = ArrayList(state.toolbarComponentsList).filterIsInstance<RHMIComponent.ToolbarButton>().filter { it.action > 0}
 		state.toolbarComponentsList.forEach {
 			if (it.getAction() != null) {
 				it.setSelectable(false)
@@ -105,7 +115,7 @@ class DetailsView(val state: RHMIState, val phoneAppResources: PhoneAppResources
 			it.getAction()?.asHMIAction()?.getTargetModel()?.asRaIntModel()?.value = listView.state.id
 		}
 
-		listViewId = listView.state.id
+		this.listState = listView.state
 	}
 
 	/**
@@ -115,13 +125,26 @@ class DetailsView(val state: RHMIState, val phoneAppResources: PhoneAppResources
 		state.setProperty(RHMIProperty.PropertyId.SPEEDLOCK, false)
 	}
 
-	fun show() {
-		redraw()
+	fun hide() {
+		val emptyList = RHMIModel.RaListModel.RHMIListConcrete(1)
+		iconWidget.getModel()?.setValue(emptyList, 0, 0, 0)
+		titleWidget.getModel()?.setValue(emptyList, 0, 0, 0)
+		listWidget.getModel()?.setValue(emptyList, 0, 0, 0)
+		imageWidget.setVisible(false)
+	}
 
+	fun show() {
 		// set the focus to the first button
 		state as RHMIState.ToolbarState
-		var buttons = ArrayList(state.toolbarComponentsList).filterIsInstance<RHMIComponent.ToolbarButton>().filter { it.action > 0}
-		state.app.events.values.filterIsInstance<RHMIEvent.FocusEvent>().firstOrNull()?.triggerEvent(mapOf(0 to buttons[0].id))
+		val buttons = ArrayList(state.toolbarComponentsList).filterIsInstance<RHMIComponent.ToolbarButton>().filter { it.action > 0}
+		focusTriggerController.focusComponent(buttons[0])
+
+		redraw()
+
+		// remove the message from the Notification Center, since we are reading it now
+		selectedNotification?.also {
+			statusbarController.remove(it)
+		}
 	}
 
 	fun redraw() {
@@ -135,44 +158,58 @@ class DetailsView(val state: RHMIState, val phoneAppResources: PhoneAppResources
 		// find the notification, or bail to the list
 		val notification = NotificationsState.getNotificationByKey(selectedNotification?.key)
 		if (notification == null) {
-			try {
-				state.app.events.values.filterIsInstance<RHMIEvent.FocusEvent>().firstOrNull()?.triggerEvent(mapOf(0 to listViewId))
-			} catch (e: BMWRemoting.ServiceException) {
-				Log.w(TAG, "Failed to close detailsView showing a missing notification: $e")
-			}
+			focusTriggerController.focusState(listState, false)
 			return
 		}
 
 		// prepare the app icon and title
-		val icon = graphicsHelpers.compress(phoneAppResources.getIconDrawable(notification.icon), 48, 48)
-		val appname = phoneAppResources.getAppName(notification.packageName)
+		val appIcon = notification.appIcon?.let {graphicsHelpers.compress(it, 48, 48)} ?: ""
+		val appName = notification.appName
 		val iconListData = RHMIModel.RaListModel.RHMIListConcrete(3)
-		iconListData.addRow(arrayOf(icon, "", appname))
+		iconListData.addRow(arrayOf(appIcon, "", appName))
+
+		// prepare the title data
+		var sidePictureWidth = 0
+		val titleListData = RHMIModel.RaListModel.RHMIListConcrete(2)
+		if (notification.sidePicture == null || notification.sidePicture.intrinsicHeight <= 0) {
+			titleListData.addRow(arrayOf("", notification.title))
+		} else {
+			val sidePictureHeight = 96  // force the side picture to be this tall
+			sidePictureWidth = (sidePictureHeight.toFloat() / notification.sidePicture.intrinsicHeight * notification.sidePicture.intrinsicWidth).toInt()
+			val sidePicture = graphicsHelpers.compress(notification.sidePicture, sidePictureWidth, sidePictureHeight)
+			titleListData.addRow(arrayOf(BMWRemoting.RHMIResourceData(BMWRemoting.RHMIResourceType.IMAGEDATA, sidePicture), notification.title + "\n"))
+		}
+		titleWidget.setProperty(RHMIProperty.PropertyId.LIST_COLUMNWIDTH.id, "$sidePictureWidth,*")
 
 		// prepare the notification text
 		val listData = RHMIModel.RaListModel.RHMIListConcrete(1)
 		val trimmedText = notification.text.substring(0, min(MAX_LENGTH, notification.text.length))
 		listData.addRow(arrayOf(trimmedText))
 
-		state.getTextModel()?.asRaDataModel()?.value = appname
+		state.getTextModel()?.asRaDataModel()?.value = appName
 		iconWidget.getModel()?.value = iconListData
-		titleWidget.getModel()?.asRaDataModel()?.value = notification.title
+		titleWidget.getModel()?.value = titleListData
 		listWidget.getModel()?.value = listData
 
 		// try to load a picture from the notification
-		val picture = if (notification.picture != null) {
-			graphicsHelpers.compress(notification.picture, 400, 300, quality = 65)
-		} else if (notification.pictureUri != null) {
-			try {
-				val drawable = phoneAppResources.getUriDrawable(notification.pictureUri)
-				graphicsHelpers.compress(drawable, 400, 300, quality = 65)
-			} catch (e: Exception) {
-				Log.w(TAG, "Failed to open picture from ${notification.pictureUri}", e)
-				null
-			}
+		var pictureWidth = 400
+		var pictureHeight = 300
+		val pictureDrawable = try {
+			notification.picture ?: notification.pictureUri?.let { phoneAppResources.getUriDrawable(it) }
+		} catch (e: Exception) {
+			Log.w(TAG, "Failed to open picture from ${notification.pictureUri}", e)
+			null
+		}
+		val picture = if (pictureDrawable != null && pictureDrawable.intrinsicHeight > 0) {
+			pictureHeight = min(300, pictureDrawable.intrinsicHeight)
+			pictureWidth = (pictureHeight.toFloat() / pictureDrawable.intrinsicHeight * pictureDrawable.intrinsicWidth).toInt()
+			graphicsHelpers.compress(pictureDrawable, pictureWidth, pictureHeight, quality = 65)
 		} else { null }
 		// if we have a picture to display
 		if (picture != null) {
+			// set the dimensions, ID4 clips images to this rectangle
+			imageWidget.setProperty(RHMIProperty.PropertyId.HEIGHT, pictureHeight)
+			imageWidget.setProperty(RHMIProperty.PropertyId.WIDTH, pictureWidth)
 			imageWidget.setVisible(true)
 			imageWidget.getModel()?.asRaImageModel()?.value = picture
 		} else {
@@ -180,7 +217,7 @@ class DetailsView(val state: RHMIState, val phoneAppResources: PhoneAppResources
 		}
 
 		// find and enable the clear button
-		var buttons = ArrayList(state.toolbarComponentsList).filterIsInstance<RHMIComponent.ToolbarButton>().filter { it.action > 0}
+		val buttons = ArrayList(state.toolbarComponentsList).filterIsInstance<RHMIComponent.ToolbarButton>().filter { it.action > 0}
 		val clearButton = buttons[0]
 		if (notification.isClearable) {
 			clearButton.setEnabled(true)
@@ -208,13 +245,13 @@ class DetailsView(val state: RHMIState, val phoneAppResources: PhoneAppResources
 					if (action.supportsReply ) {
 						// show input to reply
 						button.getAction()?.asHMIAction()?.getTargetModel()?.asRaIntModel()?.value = inputView.id
-						val replyController = ReplyControllerNotification(notification, action, controller)
-						ReplyView(listViewId, inputView, replyController)
+						val replyController = ReplyControllerNotification(notification, action, controller, notificationSettings.quickReplies)
+						ReplyView(listState, inputView, replyController)
 						readoutInteractions.cancel()
 					} else {
 						// trigger the custom action
 						controller.action(notification.key, action.name.toString())
-						button.getAction()?.asHMIAction()?.getTargetModel()?.asRaIntModel()?.value = listViewId
+						button.getAction()?.asHMIAction()?.getTargetModel()?.asRaIntModel()?.value = listState.id
 					}
 				}
 			}

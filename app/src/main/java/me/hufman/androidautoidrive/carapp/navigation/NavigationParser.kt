@@ -6,6 +6,7 @@ import android.location.Geocoder
 import android.util.Log
 import com.google.openlocationcode.OpenLocationCode
 import me.hufman.androidautoidrive.carapp.maps.LatLong
+import java.io.IOException
 import java.lang.IllegalArgumentException
 import java.net.URI
 import java.net.URISyntaxException
@@ -19,7 +20,11 @@ interface AddressSearcher {
 class AndroidGeocoderSearcher(context: Context): AddressSearcher {
 	val geocoder = Geocoder(context)
 	override fun search(query: String): Address? {
-		return geocoder.getFromLocationName(query, 1)?.getOrNull(0)
+		return try {
+			geocoder.getFromLocationName(query, 1)?.getOrNull(0)
+		} catch (e: IOException) {
+			null
+		}
 	}
 }
 
@@ -111,6 +116,7 @@ class NavigationParser(val addressSearcher: AddressSearcher) {
 			val splits = latlng.split(',')
 			LatLong(splits[0].trim().toDouble(), splits[1].trim().toDouble())
 		} else null
+		if (latlong?.latitude == 0.0 && latlong.latitude == 0.0) return null
 		val label = queryResult?.groupValues?.getOrNull(4) ?: ""
 		if (latlong != null) return latlongToRHMI(latlong, label)   // found a latlong
 
@@ -124,8 +130,8 @@ class NavigationParser(val addressSearcher: AddressSearcher) {
 		return parsePlusCode(matcher.groupValues[1])
 	}
 
-	private fun parsePlusCode(code: String): String? {
-		val parsed = PLUSCODE_SPLITTER.matchEntire(code) ?: return null
+	private fun parsePlusCode(plusCode: String): String? {
+		val parsed = PLUSCODE_SPLITTER.matchEntire(plusCode) ?: return null
 		val code = parsed.groupValues[1]
 		val reference = parsed.groupValues[3]
 		var olc = try {
@@ -133,7 +139,7 @@ class NavigationParser(val addressSearcher: AddressSearcher) {
 		} catch (e: IllegalArgumentException) {
 			return null
 		}
-		if (olc.isShort && reference != null) {
+		if (olc.isShort && reference.isNotBlank()) {
 			val referenceName = reference.replace('+', ' ').trim()
 			val result = addressSearcher.search(referenceName) ?: return null
 			olc = olc.recover(result.latitude, result.longitude)

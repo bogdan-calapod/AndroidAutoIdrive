@@ -11,24 +11,35 @@ import com.spotify.android.appremote.api.ConnectionParams
 import com.spotify.android.appremote.api.SpotifyAppRemote
 import com.spotify.protocol.client.Subscription
 import com.spotify.protocol.types.*
-import kotlinx.coroutines.CompletableDeferred
-import me.hufman.androidautoidrive.MutableObservable
+import kotlinx.coroutines.*
+import me.hufman.androidautoidrive.*
 import me.hufman.androidautoidrive.Observable
-import me.hufman.androidautoidrive.R
 import me.hufman.androidautoidrive.music.*
 import me.hufman.androidautoidrive.music.PlaybackPosition
-import java.lang.Exception
+import me.hufman.androidautoidrive.music.spotify.SpotifyWebApi
+import me.hufman.androidautoidrive.music.spotify.SpotifyMusicMetadata
 import java.util.*
 
-class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): MusicAppController {
+class SpotifyAppController(context: Context, val remote: SpotifyAppRemote, val webApi: SpotifyWebApi): MusicAppController {
 	companion object {
 		const val TAG = "SpotifyAppController"
 		const val REDIRECT_URI = "me.hufman.androidautoidrive://spotify_callback"
-		
-		fun hasSupport(context: Context): Boolean {
-			val CLIENT_ID = context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
+
+		fun getClientId(context: Context): String {
+			return context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
 					.metaData.getString("com.spotify.music.API_KEY", "unavailable")
-			return CLIENT_ID != "unavailable" && CLIENT_ID != ""
+		}
+
+		fun hasSupport(context: Context): Boolean {
+			val clientId = getClientId(context)
+			return clientId != "unavailable" && clientId != ""
+		}
+
+		fun isSpotifyInstalled(context: Context): Boolean {
+			return try {
+				context.packageManager.getPackageInfo("com.spotify.music", 0)
+				true
+			} catch (e: PackageManager.NameNotFoundException) { false }
 		}
 
 		fun MusicMetadata.Companion.fromSpotify(track: Track, coverArt: Bitmap? = null): MusicMetadata {
@@ -37,19 +48,6 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 					title = track.name, album = track.album.name, artist = track.artist.name, coverArt = coverArt)
 		}
 
-		fun MusicMetadata.Companion.fromSpotifyQueueListItem(listItem: ListItem): MusicMetadata {
-			return MusicMetadata(mediaId = listItem.uri, queueId = listItem.uri.hashCode().toLong(),
-					title = listItem.title, artist = listItem.subtitle,
-					playable = listItem.playable, browseable = listItem.hasChildren,
-					coverArtUri = listItem.imageUri?.raw)
-		}
-
-		fun MusicMetadata.Companion.fromSpotify(listItem: ListItem, coverArt: Bitmap? = null): MusicMetadata {
-			// browse result
-			return MusicMetadata(mediaId = listItem.uri, queueId = listItem.uri.hashCode().toLong(),
-					title = listItem.title, subtitle = listItem.subtitle,
-					playable = listItem.playable, browseable = listItem.hasChildren, coverArt = coverArt)
-		}
 		fun MusicMetadata.toListItem(): ListItem {
 			return ListItem(this.mediaId, this.mediaId, null, this.title, this.subtitle,
 					this.playable, this.browseable)
@@ -60,32 +58,46 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 		}
 	}
 
-	class Connector(val context: Context): MusicAppController.Connector {
+	class Connector(val context: Context, val prompt: Boolean = true, val isProbing: Boolean = false): MusicAppController.Connector {
 		var lastError: Throwable? = null
 
+		fun hasSupport(): Boolean {
+			return SpotifyAppController.hasSupport(context)
+		}
+		fun isSpotifyInstalled(): Boolean {
+			return SpotifyAppController.isSpotifyInstalled(context)
+		}
+		fun previousControlSuccess(): Boolean {
+			return AppSettings[AppSettings.KEYS.SPOTIFY_CONTROL_SUCCESS].toBoolean()
+		}
+
 		override fun connect(appInfo: MusicAppInfo): Observable<SpotifyAppController> {
-			val pendingController = MutableObservable<SpotifyAppController>()
 			if (appInfo.packageName != "com.spotify.music") {
+				val pendingController = MutableObservable<SpotifyAppController>()
 				pendingController.value = null
 				return pendingController
 			}
+			return connect()
+		}
 
-			Log.w(TAG, "Attempting to connect to Spotify Remote")
-
-			val CLIENT_ID = context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
-					.metaData.getString("com.spotify.music.API_KEY", "unavailable")
-			val params = ConnectionParams.Builder(CLIENT_ID)
+		fun connect(): Observable<SpotifyAppController> {
+			Log.i(TAG, "Attempting to connect to Spotify Remote")
+			val params = ConnectionParams.Builder(getClientId(context))
 					.setRedirectUri(REDIRECT_URI)
-					.showAuthView(true)
+					.showAuthView(prompt)
 					.build()
 
-
+			val pendingController = MutableObservable<SpotifyAppController>()
 			val remoteListener = object: com.spotify.android.appremote.api.Connector.ConnectionListener {
 				override fun onFailure(e: Throwable?) {
 					Log.e(TAG, "Failed to connect to Spotify Remote: $e")
 					if (hasSupport(context)) {
 						// show an error to the UI, unless we don't have an API key
 						this@Connector.lastError = e
+					}
+					// remember that we failed to connect
+					if (pendingController.value == null) {
+						MutableAppSettingsReceiver(context)[AppSettings.KEYS.SPOTIFY_CONTROL_SUCCESS] = "false"
 					}
 					// disconnect an existing session, if any
 					pendingController.value?.disconnect()
@@ -97,11 +109,25 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 				override fun onConnected(remote: SpotifyAppRemote?) {
 					if (remote != null) {
 						Log.i(TAG, "Successfully connected to Spotify Remote")
-						pendingController.value = SpotifyAppController(context, remote)
+						this@Connector.lastError = null
+
+						val appSettings = MutableAppSettingsReceiver(context)
+						appSettings[AppSettings.KEYS.SPOTIFY_CONTROL_SUCCESS] = "true"
+
+						val spotifyWebApi = SpotifyWebApi.getInstance(context, appSettings)
+						spotifyWebApi.initializeWebApi(isProbing)
+						spotifyWebApi.isUsingSpotify = true
+
+						pendingController.value = SpotifyAppController(context, remote, spotifyWebApi)
 
 						// if app discovery says we aren't able to connect, discover again
-						if (!appInfo.connectable) {
-							MusicAppDiscovery(context, Handler()).probeApp(appInfo)
+						if (!isProbing) {
+							val musicAppDiscovery = MusicAppDiscovery(context, Handler())
+							musicAppDiscovery.loadInstalledMusicApps()
+							val spotifyAppInfo = musicAppDiscovery.allApps.firstOrNull { it.packageName == "com.spotify.music" }
+							if (spotifyAppInfo?.connectable == false) {
+								musicAppDiscovery.probeApp(spotifyAppInfo)
+							}
 						}
 					} else {
 						Log.e(TAG, "Connected to a null Spotify Remote?")
@@ -139,12 +165,15 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 	var playerOptions: PlayerOptions? = null
 	var currentTrack: MusicMetadata? = null
 	var currentSongCoverArtCache = LruCache<ImageUri, Bitmap>(4)
-	var position: PlaybackPosition = PlaybackPosition(true, 0, 0, -1)
+	var position: PlaybackPosition = PlaybackPosition(true, false, 0, 0, -1)
 	var currentTrackLibrary: Boolean? = null
 	var queueUri: String? = null
 	var queueItems: List<MusicMetadata> = LinkedList()
 	var queueMetadata: QueueMetadata? = null
 	val coverArtCache = LruCache<ImageUri, Bitmap>(50)
+	var createQueueMetadataJob: Job? = null
+	var defaultDispatcher = Dispatchers.Default
+	var onQueueLoaded: (() -> Unit)? = null
 
 	init {
 		spotifySubscription.setEventCallback { playerState ->
@@ -180,7 +209,7 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 			}
 
 			// update a progress bar
-			position = PlaybackPosition(playerState.isPaused, lastPosition = playerState.playbackPosition, maximumPosition = playerState.track.duration)
+			position = PlaybackPosition(playerState.isPaused, false, lastPosition = playerState.playbackPosition, maximumPosition = playerState.track.duration)
 
 			callback?.invoke(this)
 		}
@@ -192,23 +221,39 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 			if (queueUri != uri) {
 				queueUri = uri
 				queueItems = emptyList()
-				if (uri != null) {
-					val listItem = ListItem(uri, uri, null, playerContext.title, playerContext.subtitle, false, true)
-					loadPaginatedItems(listItem, { queueUri == playerContext.uri }) {
-						queueItems = it
 
-						// shuffle play button somehow gets returned with the rest of the tracks when loading an album
-						if (queueItems.isNotEmpty() && queueItems[0].artist == "" && queueItems[0].title == "Shuffle Play") {
-							queueItems = queueItems.drop(1)
-						}
-
-						buildQueueMetadata()
-						callback?.invoke(this)
+				val isLikedSongsPlaylist = playerContext.type == "your_library" || playerContext.type == "your_library_tracks"
+				if (isLikedSongsPlaylist) {
+					createLikedSongsQueueMetadata()
+				} else {
+					if (createQueueMetadataJob?.isActive == true) {
+						createQueueMetadataJob?.cancel()
 					}
+					createQueueMetadataJob = null
+					webApi.clearGetLikedSongsAttemptedFlag()
+					createQueueMetadata(playerContext)
 				}
 			}
 
 			callback?.invoke(this)
+		}
+	}
+
+	/**
+	 * Creates the [QueueMetadata] for the "Liked Songs" playlist using the Web API. If the web API is
+	 * not authorized then the the [QueueMetadata] is created from the app remote API.
+	 */
+	fun createLikedSongsQueueMetadata() {
+		createQueueMetadataJob = GlobalScope.launch(defaultDispatcher) {
+			queueItems = webApi.getLikedSongs(this@SpotifyAppController) ?: emptyList()
+			if (queueItems.isNotEmpty()) {
+				queueMetadata = QueueMetadata("Liked Songs", null, queueItems)
+				loadQueueCoverart()
+
+				callback?.invoke(this@SpotifyAppController)
+			} else {
+				createQueueMetadata(PlayerContext(queueUri, "Liked Songs", null, null))
+			}
 		}
 	}
 
@@ -230,17 +275,35 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 	}
 
 	/**
-	 * Creates the QueueMetadata for the current queue containing the title, subtitle, queue songs,
-	 * and queue cover art.
+	 * Creates the [QueueMetadata] for the current player context using the app remote API.
 	 */
-	private fun buildQueueMetadata() {
+	private fun createQueueMetadata(playerContext: PlayerContext) {
+		if (queueUri != null && queueItems.isEmpty()) {
+			val listItem = ListItem(queueUri, queueUri, null, playerContext.title, playerContext.subtitle, false, true)
+			loadPaginatedItems(listItem, { queueUri == playerContext.uri }) {
+				queueItems = removeShufflePlayButtonMetadata(it)
+
+				// build a basic QueueMetadata while waiting for cover art to load
+				queueMetadata = QueueMetadata(playerContext.title, playerContext.subtitle, queueItems, mediaId = playerContext.uri)
+				loadQueueCoverart()
+
+				onQueueLoaded?.invoke()
+				callback?.invoke(this)
+			}
+		}
+	}
+
+	/**
+	 * Creates a new instance of the [QueueMetadata] with the queue cover art loaded.
+	 */
+	private fun loadQueueCoverart() {
 		val recentlyPlayedUri = "com.spotify.recently-played"
 		val li = ListItem(recentlyPlayedUri, recentlyPlayedUri, null, null, null, false, true)
 		remote.contentApi.getChildrenOfItem(li, 1, 0).setResultCallback { recentlyPlayed ->
 			val item = recentlyPlayed?.items?.get(0)
 			if (item != null) {
 				remote.imagesApi.getImage(item.imageUri, Image.Dimension.THUMBNAIL).setResultCallback { coverArt ->
-					queueMetadata = QueueMetadata(item.title,item.subtitle,SpotifyMusicMetadata.createSpotifyMusicMetadataList(this, queueItems),coverArt)
+					queueMetadata = QueueMetadata(item.title, item.subtitle, queueItems, coverArt, item.uri)
 				}
 			}
 		}
@@ -267,7 +330,7 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 		remote.contentApi.getChildrenOfItem(parentItem, 200, destination.size).setResultCallback { items ->
 			if (items != null && stillValid()) {    // this is still a valid request
 				destination.addAll(items.items.filterNotNull().map { listItem: ListItem ->
-					MusicMetadata.fromSpotifyQueueListItem(listItem)
+					SpotifyMusicMetadata.fromSpotifyQueueListItem(this, listItem)
 				})
 				if (destination.size < items.total && items.items.isNotEmpty()) {   // more tracks to load
 					loadPaginatedItems(destination, parentItem, stillValid, onComplete)
@@ -303,7 +366,22 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 	}
 
 	override fun playSong(song: MusicMetadata) {
-		remote.playerApi.play(song.mediaId)
+		// if the item is a track then load the album context for it so the rest of the album is queued up
+		if (song.subtitle == "Track") {
+			// album queue loaded is not the correct context for the song, will need to load the correct album into the queue
+			if (queueMetadata?.mediaId != song.album) {
+				remote.playerApi.play(song.album)
+
+				// queue is loaded async but is needed before playing the song from the queue
+				onQueueLoaded = {
+					playQueue(song)
+				}
+			} else {
+				playQueue(song)
+			}
+		} else {
+			remote.playerApi.play(song.mediaId)
+		}
 	}
 
 	override fun playQueue(song: MusicMetadata) {
@@ -358,7 +436,6 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 			MusicAction.SKIP_TO_QUEUE_ITEM -> false
 			MusicAction.SET_SHUFFLE_MODE -> playerActions?.canToggleShuffle == true
 			MusicAction.SET_REPEAT_MODE -> playerActions?.canRepeatContext == true || playerActions?.canRepeatTrack == true
-			// figure out search
 			else -> false
 		}
 	}
@@ -425,7 +502,6 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 		return when(playerOptions?.repeatMode) {
 			Repeat.ALL -> RepeatMode.ALL
 			Repeat.ONE -> RepeatMode.ONE
-			Repeat.OFF -> RepeatMode.OFF
 			else -> RepeatMode.OFF
 		}
 	}
@@ -435,7 +511,7 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 		if (directory?.mediaId == null) {
 			remote.contentApi.getRecommendedContentItems("default-cars").setResultCallback { results ->
 				deferred.complete(results?.items?.map {
-					MusicMetadata.fromSpotify(it)
+					SpotifyMusicMetadata.fromBrowseItem(this, it)
 				} ?: LinkedList())
 			}.setErrorCallback {
 				deferred.complete(LinkedList())
@@ -448,9 +524,27 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 		return deferred.await()
 	}
 
-	override suspend fun search(query: String): List<MusicMetadata>? {
-		// requires a Web API call, not sure how to get the access token
-		return null
+	/**
+	 * Removes the shuffle play button [MusicMetadata] if it is present in the supplied list.
+	 *
+	 * When loading a list of tracks such as an album, a shuffle play button [MusicMetadata] object is
+	 * sometimes present. Call this method to get the list of [MusicMetadata]s that omit the shuffle
+	 * play button.
+	 */
+	private fun removeShufflePlayButtonMetadata(items: List<MusicMetadata>): List<MusicMetadata> {
+		return if (items.isNotEmpty() && items[0].mediaId == queueUri) {
+			items.drop(1)
+		} else {
+			items
+		}
+	}
+
+	override suspend fun search(query: String): List<MusicMetadata> {
+		val deferred = CompletableDeferred<List<MusicMetadata>>()
+		GlobalScope.launch(defaultDispatcher) {
+			deferred.complete(webApi.searchForQuery(this@SpotifyAppController, query))
+		}
+		return deferred.await()
 	}
 
 	override fun subscribe(callback: (MusicAppController) -> Unit) {
@@ -480,6 +574,8 @@ class SpotifyAppController(context: Context, val remote: SpotifyAppRemote): Musi
 		} catch (e: Exception) {
 			Log.w(TAG, "Exception while disconnecting from Spotify: $e")
 		}
+
+		webApi.disconnect()
 	}
 
 	override fun toString(): String {

@@ -15,10 +15,12 @@ class MockBMWRemotingServer: BaseBMWRemotingServer() {
 	val data = HashMap<Int, Any>()
 	val triggeredEvents = HashMap<Int, Map<*, *>>()
 
+	val amHandles = ArrayList<Int>()
 	val amApps = ArrayList<String>()
 	val avConnections = HashMap<Int, String>()
 	var avCurrentContext = -1
 	var avCurrentState = BMWRemoting.AVPlayerState.AV_PLAYERSTATE_STOP
+	val cdsSubscriptions = HashSet<String>()
 
 	val capabilities = mutableMapOf(
 		"hmi.display-width" to "1280",
@@ -92,7 +94,7 @@ class MockBMWRemotingServer: BaseBMWRemotingServer() {
 	}
 
 	override fun cds_addPropertyChangedEventHandler(handle: Int?, propertyName: String?, ident: String?, intervalLimit: Int?) {
-
+		cdsSubscriptions.add(propertyName ?: "")
 	}
 
 	override fun cds_getPropertyAsync(handle: Int?, ident: String?, propertyName: String?) {
@@ -100,10 +102,20 @@ class MockBMWRemotingServer: BaseBMWRemotingServer() {
 	}
 
 	override fun am_create(deviceId: String?, bluetoothAddress: ByteArray?): Int {
-		return 1
+		amHandles.add(amHandles.size + 1)
+		return amHandles.size
 	}
+
+	override fun am_dispose(handle: Int?) {
+		handle ?: return
+		amHandles[handle-1] = -1
+	}
+
 	override fun am_addAppEventHandler(handle: Int?, ident: String?) {
 	}
+	override fun am_removeAppEventHandler(handle: Int?, ident: String?) {
+	}
+
 	override fun am_registerApp(handle: Int?, appId: String?, values: MutableMap<*, *>?) {
 		amApps.add(appId ?: "")
 	}

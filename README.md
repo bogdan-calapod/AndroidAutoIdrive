@@ -1,8 +1,8 @@
 Android Auto for IDrive
 =======================
 
-[![Build Status](https://travis-ci.org/hufman/AndroidAutoIdrive.svg?branch=master)](https://travis-ci.org/hufman/AndroidAutoIdrive)
-[![Coverage Status](https://coveralls.io/repos/github/hufman/AndroidAutoIdrive/badge.svg?branch=master)](https://coveralls.io/github/hufman/AndroidAutoIdrive?branch=master)
+[![Build Status](https://img.shields.io/github/workflow/status/hufman/AndroidAutoIdrive/build.svg)](https://github.com/hufman/AndroidAutoIdrive/actions?query=workflow%3Abuild)
+[![Code Coverage](https://img.shields.io/codecov/c/gh/hufman/AndroidAutoIdrive/master.svg)](https://codecov.io/gh/hufman/AndroidAutoIdrive)
 [![Crowdin](https://badges.crowdin.net/androidautoidrive/localized.svg)](https://crowdin.com/project/androidautoidrive)
 [![Release Download](https://img.shields.io/github/release/hufman/AndroidAutoIdrive.svg)](https://github.com/hufman/AndroidAutoIdrive/releases/latest)
 [![Download Counter](https://img.shields.io/github/downloads/hufman/AndroidAutoIdrive/total.svg)](https://github.com/hufman/AndroidAutoIdrive/releases/latest)
@@ -10,27 +10,34 @@ Android Auto for IDrive
 [![Buy Me A Coffee](https://img.shields.io/badge/support-buymeacoffee-5f7fff)](https://www.buymeacoffee.com/q4JVoxz)
 ![MIT Licensed](https://img.shields.io/github/license/hufman/AndroidAutoIdrive)
 
-The BMW/Mini IDrive NBT does not offer native Android Auto integration, but does provide a very powerful Connected Apps convergence option with many exciting integration points into the car. This project is an effort to implement most of the features of Android Auto as unofficial BMW/Mini Connected Apps.
+The BMW/Mini IDrive NBT does not offer native Android Auto integration, but does provide a very powerful Connected Apps convergence option with tight integration points into the car. This project is an effort to implement most of the features of Android Auto as unofficial BMW/Mini Connected Apps.
 
-By relying on the Connected Apps technology, this app greatly extends the functionality of the car without needing any modifications. Any MY2014 or newer BMW or Mini equipped with NBT or NBT Evo and the "Navigation System Professional (S609A)" [option](https://www.mdecoder.com/) or "BMW Apps (6NR)" or "Mini Connected (SA6NM)" options should be compatible.
+By relying on the Connected Apps technology, this app greatly extends the functionality of the car without any modifications or hacks. Any MY2014 or newer BMW or Mini equipped with NBT or NBT Evo and the "BMW Apps (6NR)" feature, an active [BMW ConnectedDrive](https://www.bmwusa.com/explore/connecteddrive.html) subscription, or the "Mini Connected (SA6NM)" option should be compatible.
 
 [![App List](https://hufman.github.io/AndroidAutoIdrive/images/demo-applist.gif)<br />Gallery](https://hufman.github.io/AndroidAutoIdrive/gallery.html)
 
 Overview
 --------
 
-As part of the Connected Apps feature, when the phone connects over USB (or Bluetooth in 2017+ models), a tunnel is created to allow other apps on the phone to interact with the car. Over this connection, enabled phone apps can show a special interface in the car, while providing tight user integration due to actually running all logic on the phone.
+As part of the Connected Apps feature, when the phone connects to the car over USB (or Bluetooth in 2017+ models), enabled phone apps can show a special dashboard-optimized interface in the car.
 
-Android Auto for IDrive, combined with the safety benefits of the tactile IDrive controller, allows the user to interact with their incoming notifications and control their phone's music, while the phone is tucked out of reach.
+Android Auto for IDrive, combined with the safety benefits of the tactile IDrive controller, builds on this protocol to allow the user to interact with their incoming notifications and control their phone's music while the phone is safely tucked away.
 
 Getting Started
 ---------------
 
-This app requires that the BMW or Mini Connected app for your car is installed and can successfully add Connected and Calendar entries to your car's Connected Apps menu.
+This app requires that the BMW Connected or Mini Connected app for your car is installed and can successfully add the Connected and Calendar entries to your car's Connected Apps menu. The new My BMW app seems to interfere with BMW Connected and is not supported.
 
-Download the APK from the [Releases page](https://github.com/hufman/AndroidAutoIdrive/releases/latest). Choose the one that says "sentry" to automatically upload crash reports, or choose "nonalytics" otherwise. After starting, the app should detect the Connected app and start waiting for the car connection.
+Download the APK of the latest stable release from the [Releases page](https://github.com/hufman/AndroidAutoIdrive/releases/latest). Choose the one that says "sentry" to automatically upload crash reports, or choose "nonalytics" otherwise. After starting, the app should detect the Connected app and start waiting for the car connection.
 
-If you'd like to try out the latest build, [download it here](https://androidautoidrive.s3.amazonaws.com/hufman/AndroidAutoIdrive/androidautoidrive-latest-master-nomap-nonalytics-release.apk)!
+Also consider trying out the nightly build! It has the latest features and is a preview of the next release, so please consider installing the [Sentry build](https://androidautoidrive.s3.amazonaws.com/hufman/AndroidAutoIdrive/androidautoidrive-latest-master-nomap-sentry-release.apk) to automatically report crashes.
+The [nonalytics](https://androidautoidrive.s3.amazonaws.com/hufman/AndroidAutoIdrive/androidautoidrive-latest-master-nomap-nonalytics-release.apk) build is available too.
+Some of the new features include:
+  - Supports logging in as Spotify to set the global coverart in ID5+
+  - Adds Spotify browse and playlist coverart
+  - Reads out notifications
+  - Supports replying to notifications
+  - Starts car navigation to handle certain phone navigation buttons
 
 Check out the [FAQ](https://hufman.github.io/AndroidAutoIdrive/faq.html) if you run into problems.
 
@@ -61,9 +68,10 @@ Implemented Features
   - Phone Notifications
     - Popup about new notifications
     - Supports Dismiss, Mark As Read, or other notification actions
-  - Google Maps
+  - Google Maps (proof-of-concept)
     - Basic search and routing
     - Includes some dark themes
+    - Poor performance due to the nature of the protocol
     - Not compiled by default, because showing Google Maps in a car is against the Maps API license
   - Control of Android Auto compatible music apps
     - Supports browsing and searching apps' music libraries
@@ -75,24 +83,28 @@ Implemented Features
       - Audiobooks and Podcasts:
         - [Acast Podcast Player](https://play.google.com/store/apps/details?id=com.acast.nativeapp)
         - [AntennaPod](https://play.google.com/store/apps/details?id=de.danoeh.antennapod)
+        - [Audecibel](https://play.google.com/store/apps/details?id=com.podcastsapp)
         - [The Bob & Tom Show](https://play.google.com/store/apps/details?id=com.radio.station.BOB.TOM)
         - [Castbox](https://play.google.com/store/apps/details?id=fm.castbox.audiobook.radio.podcast)
         - [Google Play Books](https://play.google.com/store/apps/details?id=com.google.android.apps.books)
         - [iVooz](https://play.google.com/store/apps/details?id=com.ivoox.app)
-        - [Libro.fm Audiobooks](https://play.google.com/store/apps/details?id=fm.libro.librofm)
+        - [Libro.fm Audiobooks](https://play.google.com/store/apps/details?id=fm.libro.librofm) up to version [3.2.2](https://apkpure.com/libro-fm-audiobooks/fm.libro.librofm/download/90-APK)
         - [Listen Audiobook Player](https://play.google.com/store/apps/details?id=com.acmeandroid.listen)
         - [Player FM](https://play.google.com/store/apps/details?id=fm.player)
         - [Podcast Addict](https://play.google.com/store/apps/details?id=com.bambuna.podcastaddict)
+        - [Stitcher](https://play.google.com/store/apps/details?id=com.stitcher.app)
         - [Voice Audiobook Player](https://play.google.com/store/apps/details?id=de.ph1b.audiobook)
       - Music Library
         - [AIMP](https://play.google.com/store/apps/details?id=com.aimp.player)
         - [Black Player](https://play.google.com/store/apps/details?id=com.musicplayer.blackplayerfree)
         - [DSub](https://play.google.com/store/apps/details?id=github.daneren2005.dsub)
+        - [HiBy Music](https://play.google.com/store/apps/details?id=com.hiby.music)
         - [jetAudio HD](https://play.google.com/store/apps/details?id=com.jetappfactory.jetaudio)
         - [Media Monkey](https://play.google.com/store/apps/details?id=com.ventismedia.android.mediamonkey)
         - [Musicolet Music Player](https://play.google.com/store/apps/details?id=in.krosbits.musicolet)
         - [Neutron Music Player](https://play.google.com/store/apps/details?id=com.neutroncode.mp)
         - [Plex](https://play.google.com/store/apps/details?id=com.plexapp.android) (only music and podcasts)
+        - [PlayerPro](https://play.google.com/store/apps/details?id=com.tbig.playerprotrial)
         - [PowerAmp](https://play.google.com/store/apps/details?id=com.maxmpz.audioplayer)
         - [Retro Music Player](https://play.google.com/store/apps/details?id=code.name.monkey.retromusic)
         - [Rocket Player](https://play.google.com/store/apps/details?id=com.jrtstudio.AnotherMusicPlayer)
@@ -100,11 +112,14 @@ Implemented Features
         - [VLC For Android](https://play.google.com/store/apps/details?id=org.videolan.vlc)
       - Radio
         - [AP News](https://play.google.com/store/apps/details?id=mnn.Android)
+        - [Antenne Bayern](https://play.google.com/store/apps/details?id=de.antenne.android)
         - [ARD Audiothek](https://play.google.com/store/apps/details?id=de.ard.audiothek)
+        - [Audials Radio](https://play.google.com/store/apps/details?id=com.audials)
         - [BFM](https://play.google.com/store/apps/details?id=my.bfm.app)
         - [Dash Radio](https://play.google.com/store/apps/details?id=com.dashradio.dash)
         - [DI.FM](https://play.google.com/store/apps/details?id=com.audioaddict.di)
         - [Energy Radio](https://play.google.com/store/apps/details?id=radioenergy.app)
+        - [Guardian](https://play.google.com/store/apps/details?id=com.guardian)
         - [HOT97 Official](https://play.google.com/store/apps/details?id=com.jacapps.whhl)
         - [Nederland.FM](https://play.google.com/store/apps/details?id=nl.nibbixsoft.app)
         - [NHL](https://play.google.com/store/apps/details?id=com.nhl.gc1112.free)
@@ -112,8 +127,10 @@ Implemented Features
         - [NYTimes](https://play.google.com/store/apps/details?id=com.nytimes.android)
         - [R101](https://play.google.com/store/apps/details?id=it.r101)
         - [Radio 105](https://play.google.com/store/apps/details?id=it.froggy.android.radio105)
+        - [Radio Bob](https://play.google.com/store/apps/details?id=de.radiobob.radio)
         - [Radio FM](https://play.google.com/store/apps/details?id=com.radio.fmradio)
         - [Radio Monte Carlo](https://play.google.com/store/apps/details?id=it.froggy.android.rmc)
+        - [Radio Nowy Swiat](https://play.google.com/store/apps/details?id=com.thehouseofcode.radio_nowy_swiat)
         - [RTL 102.5](https://play.google.com/store/apps/details?id=com.rtl.rtlapp)
         - [Scanner Radio](https://play.google.com/store/apps/details?id=com.scannerradio)
         - [SiriusXM](https://play.google.com/store/apps/details?id=com.sirius)
@@ -123,6 +140,8 @@ Implemented Features
         - [Virgin Radio Italy](https://play.google.com/store/apps/details?id=it.froggy.android.virginradio)
       - Streaming Services
         - [Apple Music](https://play.google.com/store/apps/details?id=com.apple.android.music)
+        - [Gaana Music](https://play.google.com/store/apps/details?id=com.gaana)
+        - [JioSaavn](https://play.google.com/store/apps/details?id=com.jio.media.jiobeats)
         - [SoundCloud](https://play.google.com/store/apps/details?id=com.soundcloud.android)
         - [Spotify](https://play.google.com/store/apps/details?id=com.spotify.music)
         - [Tidal](https://play.google.com/store/apps/details?id=com.aspiro.tidal)
@@ -159,7 +178,7 @@ This project replicates some of the features of Android Auto using the IDrive in
 Due to the unofficial reverse-engineered nature of this project, it has some limitations:
 
   - The main menu entries' icons and text can't be altered, and so do not look exactly correct
-  - The individual music source icons may not be fully functional, but they do switch the active music source
+  - The individual music source icons sometimes don't open the Audioplayer interface in ID4, but they do switch the active music source
   - Android Oreo disabled Android Open Accessory Protocol 2 audio output, which is required to play audio over the app's USB connection in model years 2014-2017. Please listen over Bluetooth audio and use this app as a control interface.
   - Some Android Auto music apps enforce a list of allowed client apps, preventing this app from launching them or browsing their libraries. However, once they are running, they can be controlled. For example, these popular music apps can not be launched, they must be started manually:
     - Amazon Music
@@ -180,18 +199,21 @@ Due to the unofficial reverse-engineered nature of this project, it has some lim
 Requirements
 ------------
 
-To communicate to the car, this project relies on the proxy connection that is created by the main Connected app on the phone. Both of the brand-specific Connected and the Connected Classic apps have been tested as compatible for this purpose, but the new Connected app is more reliable.
+To communicate to the car, this project relies on the proxy connection that is created by the main Connected app on the phone. Both of the brand-specific Connected and the Connected Classic apps have been tested as compatible for this purpose, but the new Connected app is more reliable. My BMW and the new MINI app are not compatible.
 
 Additionally, the car proposes a security challenge during the connection process, and this project asks the Security Service provided by the Connected apps for the correct response.
 The normal Connected app should be enough for this, but it might be necessary to also install the Connected Classic app to provide the Security Service.
-If this is needed, it is not recommended to install both the Connected and Connected Classic apps of the same brand, they will fight over the connection to the car and undefined results may happen.
-Instead, install the Connected Classic app of the other brand that is not intended to be used regularly, such as BMW Connected and Mini Connected Classic.
+If this is needed, it is not recommended to install both the Connected and Connected Classic apps of the same brand, they may fight over the connection to the car and undefined results may happen.
+Instead, install the Connected Classic app of the other brand that is not intended to be used regularly, for example using BMW Connected and Mini Connected Classic.
 
 Build Instructions
 ------------------
 
   - (Optional) Add a [Google Maps API key](https://developers.google.com/maps/documentation/android-sdk/signup) to `~/.gradle/gradle.properties` as a property named `AndroidAutoIdrive_GmapsApiKey`. This key should have access to Maps SDK for Android, Places API, and Directions API.
-  - (Optional) Add a [Spotify API Client ID](https://developer.spotify.com/dashboard/) to `~/.gradle/gradle.properties` as a property named `AndroidAutoIdrive_SpotifyApiKey`. It needs a Redirect URI set to `me.hufman.androidautoidrive://spotify_callback`, but no other settings are needed.
+  - (Optional) Add a [Spotify API Client ID](https://developer.spotify.com/dashboard/) to `~/.gradle/gradle.properties` as a property named `AndroidAutoIdrive_SpotifyApiKey`.
+    - The client secret is not needed, and no spaces or quotes are needed around the property value
+    - It needs the Redirect URI set to `me.hufman.androidautoidrive://spotify_callback`
+    - It may also need the package fingerprint added, [follow these instructions](https://developer.spotify.com/documentation/android/quick-start/) to configure it
   - After downloading the source code, follow the instructions in [external/README.md](external/README.md) to prepare the needed APK files from official apps.
   - Android Studio makes it easy to build this project:
     - File > New > Project From Version Control > Git

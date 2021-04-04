@@ -1,21 +1,20 @@
 package me.hufman.androidautoidrive.phoneui
 
-import android.arch.lifecycle.ViewModelProviders
-import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.os.Handler
-import android.support.v4.app.Fragment
-import android.support.v4.app.FragmentManager
-import android.support.v4.app.FragmentStatePagerAdapter
-import android.support.v4.view.ViewPager
-import android.support.v7.app.AppCompatActivity
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.FragmentManager
+import androidx.fragment.app.FragmentStatePagerAdapter
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.ViewModelProvider
 import kotlinx.android.synthetic.main.activity_musicplayer.*
-import me.hufman.androidautoidrive.CarAppAssetManager
 import me.hufman.androidautoidrive.R
-import me.hufman.androidautoidrive.Utils
+import me.hufman.androidautoidrive.music.MusicAppDiscovery
 import me.hufman.androidautoidrive.music.MusicAppInfo
-import me.hufman.androidautoidrive.music.MusicController
 import me.hufman.androidautoidrive.music.MusicMetadata
+import me.hufman.androidautoidrive.phoneui.fragments.*
+import me.hufman.androidautoidrive.phoneui.viewmodels.MusicActivityIconsModel
+import me.hufman.androidautoidrive.phoneui.viewmodels.MusicActivityModel
 
 class MusicPlayerActivity: AppCompatActivity() {
 
@@ -24,30 +23,23 @@ class MusicPlayerActivity: AppCompatActivity() {
 	}
 
 	var musicApp: MusicAppInfo? = null
-	var musicController: MusicController? = null
 
 	override fun onCreate(savedInstanceState: Bundle?) {
 		super.onCreate(savedInstanceState)
 
-		setContentView(R.layout.activity_musicplayer)
-
 		val musicApp = UIState.selectedMusicApp ?: return
 		this.musicApp = musicApp
+
+		discoverApp(musicApp)
+
+		// initialize the viewmodels
+		ViewModelProvider(this, MusicActivityModel.Factory(applicationContext, musicApp)).get(MusicActivityModel::class.java)
+		ViewModelProvider(this, MusicActivityIconsModel.Factory(this)).get(MusicActivityIconsModel::class.java)
+
+		setContentView(R.layout.activity_musicplayer)
+
 		txtAppName.text = musicApp.name
 		imgAppIcon.setImageDrawable(musicApp.icon)
-
-		// load the viewmodel
-		val viewModel = ViewModelProviders.of(this).get(MusicActivityModel::class.java)
-		viewModel.musicController = viewModel.musicController ?: MusicController(applicationContext, Handler(this.mainLooper))
-		viewModel.musicController?.connectAppManually(musicApp)
-		musicController = viewModel.musicController
-
-		// load the icons
-		val appAssets = CarAppAssetManager(this, "multimedia")
-		val images = Utils.loadZipfile(appAssets.getImagesDB("common"))
-		for (id in listOf("150.png", "148.png", "152.png", "147.png", "155.png")) {
-			viewModel.icons[id] = BitmapFactory.decodeByteArray(images[id], 0, images[id]?.size ?: 0)
-		}
 
 		val adapter = MusicPlayerPagerAdapter(supportFragmentManager)
 
@@ -55,30 +47,13 @@ class MusicPlayerActivity: AppCompatActivity() {
 		pgrMusicPlayer.adapter = adapter
 		pgrMusicPlayer.offscreenPageLimit = 2
 
-		pgrMusicPlayer.addOnPageChangeListener(object : ViewPager.OnPageChangeListener {
-			fun update(position: Int) {
-				if(position == 0) {
-					adapter.updateNowPlaying()
-				} else if (position == 2) {
-					adapter.updateQueue()
-				}
-			}
-
-			override fun onPageSelected(position: Int) {
-				update(position)
-			}
-			override fun onPageScrolled(position: Int, positionOffset: Float, positionOffsetPixels: Int) {
-				update(position)
-			}
-			override fun onPageScrollStateChanged(state: Int) {}
-		})
-
 		tabMusicPlayer.setupWithViewPager(pgrMusicPlayer)
 	}
 
-	override fun onDestroy() {
-		super.onDestroy()
-		musicController?.disconnectApp(pause=false)
+	fun discoverApp(musicAppInfo: MusicAppInfo) {
+		val musicAppDiscovery = MusicAppDiscovery(this, Handler())
+		musicAppDiscovery.loadInstalledMusicApps()
+		musicAppDiscovery.probeApp(musicAppInfo)
 	}
 
 	fun pushBrowse(directory: MusicMetadata?) {
@@ -88,6 +63,10 @@ class MusicPlayerActivity: AppCompatActivity() {
 
 	fun showNowPlaying() {
 		pgrMusicPlayer.currentItem = 0
+	}
+
+	fun showBrowse() {
+		pgrMusicPlayer.currentItem = 1
 	}
 
 	override fun onBackPressed() {
@@ -103,28 +82,22 @@ class MusicPlayerActivity: AppCompatActivity() {
 			}
 		}
 		if (pgrMusicPlayer.currentItem == 2) {
-			val container = (pgrMusicPlayer.adapter as MusicPlayerPagerAdapter).getItem(2) as MusicQueueFragment
-			val popped = container.onBackPressed()
-			if (!popped) {
-				pgrMusicPlayer.currentItem = 0
-			}
+			// go back to the main playback page
+			pgrMusicPlayer.currentItem = 0
+		}
+		if (pgrMusicPlayer.currentItem == 3) {
+			// go back to the main playback page
+			pgrMusicPlayer.currentItem = 0
 		}
 	}
 }
 
-class MusicPlayerPagerAdapter(fm: FragmentManager): FragmentStatePagerAdapter(fm) {
+class MusicPlayerPagerAdapter(fm: FragmentManager): FragmentStatePagerAdapter(fm, BEHAVIOR_RESUME_ONLY_CURRENT_FRAGMENT) {
 	val tabs = LinkedHashMap<String, Fragment>(3).apply {
 		this["Now Playing"] = MusicNowPlayingFragment()
 		this["Browse"] = MusicBrowseFragment.newInstance(MusicBrowsePageFragment.newInstance(null))
-		this["Queue"] = MusicQueueFragment.newInstance(MusicQueuePageFragment.newInstance())
-	}
-
-	fun updateNowPlaying() {
-		(tabs["Now Playing"] as MusicNowPlayingFragment).onActive()
-	}
-
-	fun updateQueue() {
-		((tabs["Queue"] as MusicQueueFragment).fragment as MusicQueuePageFragment).onActive()
+		this["Queue"] = MusicQueueFragment()
+		this["Search"] = MusicSearchFragment()
 	}
 
 	override fun getCount(): Int {

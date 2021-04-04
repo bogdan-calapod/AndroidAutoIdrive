@@ -3,14 +3,11 @@ package me.hufman.androidautoidrive.music
 import android.content.Context
 import android.content.Intent
 import android.os.Handler
-import android.support.v4.media.MediaBrowserServiceCompat
 import android.util.Log
+import androidx.media.MediaBrowserServiceCompat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.android.asCoroutineDispatcher
-import me.hufman.androidautoidrive.Analytics
-import me.hufman.androidautoidrive.AppSettings
-import me.hufman.androidautoidrive.ListSetting
-import me.hufman.androidautoidrive.MutableAppSettings
+import me.hufman.androidautoidrive.*
 import me.hufman.androidautoidrive.music.controllers.CombinedMusicAppController
 import me.hufman.androidautoidrive.music.controllers.SpotifyAppController
 import org.json.JSONArray
@@ -27,30 +24,30 @@ class MusicAppDiscovery(val context: Context, val handler: Handler): CoroutineSc
 
 	val TAG = "MusicAppDiscovery"
 
-	val appSettings = MutableAppSettings(context, handler)
-	val hiddenApps = ListSetting(appSettings, AppSettings.KEYS.HIDDEN_MUSIC_APPS)
+	val appSettings = MutableAppSettingsReceiver(context, handler)
+	val hiddenApps = StoredSet(appSettings, AppSettings.KEYS.HIDDEN_MUSIC_APPS)
 
 	private val browseApps: MutableList<MusicAppInfo> = LinkedList()
-	val combinedApps: MutableList<MusicAppInfo> = Collections.synchronizedList(LinkedList())
+	private val combinedApps: MutableList<MusicAppInfo> = Collections.synchronizedList(LinkedList())
+
+	// all detected apps
+	val allApps: List<MusicAppInfo>
+		get() {
+			return synchronized(combinedApps) {
+				combinedApps.map { it.apply {
+					hidden = hiddenApps.contains(packageName)       // update the hidden flag
+				} }
+			}
+		}
 	// which apps should show up as currently controllable
 	// shows all MediaBrowserService and MediaSession apps, unless they are hidden by user
 	// also always shows the currently-playing app
 	val validApps: List<MusicAppInfo>
 		get() {
-			val clone = synchronized(combinedApps) {
-				combinedApps.map { it }
-			}
-			return clone.filter {
-				(it.connectable && !hiddenApps.contains(it.packageName)) ||
-				(it.controllable && !hiddenApps.contains(it.packageName)) ||
+			return allApps.filter {
+				(!it.hidden && (it.connectable || it.controllable)) ||
 				musicSessions.getPlayingApp()?.packageName == it.packageName
 			}
-		}
-	// which apps should show up in the car's Media menu
-	// these app entries can't be removed once they are created
-	val connectableApps: List<MusicAppInfo>
-		get() = combinedApps.filter {
-			it.connectable && !hiddenApps.contains(it.packageName)
 		}
 
 	private val activeConnections = HashMap<MusicAppInfo, CombinedMusicAppController>()
@@ -59,7 +56,7 @@ class MusicAppDiscovery(val context: Context, val handler: Handler): CoroutineSc
 	val musicSessions = MusicSessions(context)
 
 	val connectors = listOf(
-			SpotifyAppController.Connector(context),
+			SpotifyAppController.Connector(context, isProbing = true),
 			MusicBrowser.Connector(context, handler)
 	)
 
@@ -84,7 +81,6 @@ class MusicAppDiscovery(val context: Context, val handler: Handler): CoroutineSc
 						app.browseable = jsonData.getBoolean("browseable")
 						app.searchable = jsonData.getBoolean("searchable")
 						app.playsearchable = jsonData.getBoolean("playsearchable")
-
 					}
 				}
 			}
@@ -113,11 +109,9 @@ class MusicAppDiscovery(val context: Context, val handler: Handler): CoroutineSc
 	}
 
 	/**
-	 * Discover what apps are installed on the phone that implement MediaBrowserServer
-	 * Loads a cache of previous probe results
-	 * Also adds a list of active Media Sessions
+	 * Loads the music apps installed that implement the MediaBrowserService.
 	 */
-	fun discoverApps() {
+	fun loadInstalledMusicApps() {
 		val discoveredApps = HashSet<MusicAppInfo>()
 		val previousApps = HashSet<MusicAppInfo>(browseApps)
 
@@ -145,12 +139,24 @@ class MusicAppDiscovery(val context: Context, val handler: Handler): CoroutineSc
 			}
 		}
 
-		loadCache() // load previously-probed states
+		// load previously-probed states
+		loadCache()
 
 		this.browseApps.sortBy { it.name.toLowerCase() }
 
-		// load up music session info, and register for updates
+		// load the music session apps
 		addSessionApps()
+	}
+
+	/**
+	 * Discover what apps are installed on the phone that implement MediaBrowserServer
+	 * Loads a cache of previous probe results
+	 * Also adds a list of active Media Sessions
+	 */
+	fun discoverApps() {
+		loadInstalledMusicApps()
+
+		// load up music session info, and register for updates
 		musicSessions.registerCallback(Runnable { addSessionApps() })
 
 		// watch for Hidden Apps updates
@@ -241,7 +247,8 @@ class MusicAppDiscovery(val context: Context, val handler: Handler): CoroutineSc
 			Log.w(TAG, "Did not successfully create CombinedMusicAppController!")
 			return
 		}
-		controller.subscribe {
+
+		controller.onCreatedCallback {
 			Log.d(TAG, "Received update about controller probe ${appInfo.name}: connectable=${controller.isConnected()} pending=${controller.isPending()}")
 			appInfo.connectable = controller.isConnected()
 			appInfo.playsearchable = controller.isSupportedAction(MusicAction.PLAY_FROM_SEARCH)
@@ -255,11 +262,14 @@ class MusicAppDiscovery(val context: Context, val handler: Handler): CoroutineSc
 						appInfo.browseable = true
 						listener?.run()
 					}
+
 					val searchResults = controller.search("query")
+					Log.d(TAG, "Received search results from ${appInfo.name}")
 					if (searchResults?.isNotEmpty() == true) {
 						appInfo.searchable = true
 						listener?.run()
 					}
+
 					// save our cached version and stop probing
 					disconnectApp(appInfo)
 					appInfo.probed = true

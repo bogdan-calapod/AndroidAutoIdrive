@@ -9,6 +9,8 @@ apply plugin: 'kotlin-android'
 
 apply plugin: 'kotlin-android-extensions'
 
+apply plugin: 'kotlin-kapt'
+
 apply from: 'buildtools/ColoredOutput.gradle'
 
 apply from: 'buildtools/jacoco.gradle'
@@ -25,13 +27,16 @@ android {
         applicationId "me.hufman.androidautoidrive"
         minSdkVersion 23
         targetSdkVersion 28
-        versionCode androidGitVersion.code()
+        versionCode androidGitVersion.code() + 1
         versionName androidGitVersion.name()
-        testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         archivesBaseName = "androidautoidrive-${androidGitVersion.name()}"
         buildConfigField "long", "BUILD_TIME", System.currentTimeMillis() + "L"
 
-        manifestPlaceholders = [spotify_api_key: System.env.AndroidAutoIdrive_SpotifyApiKey ? System.env.AndroidAutoIdrive_SpotifyApiKey : AndroidAutoIdrive_SpotifyApiKey]
+        manifestPlaceholders = [
+                spotify_api_key: System.env.AndroidAutoIdrive_SpotifyApiKey ? System.env.AndroidAutoIdrive_SpotifyApiKey : AndroidAutoIdrive_SpotifyApiKey,
+                appAuthRedirectScheme: applicationId
+        ]
 
         // show the Audio Context option for advanced users
         // Forcing it is only useful for old phones with Android Open Accessory v2 Audio support
@@ -46,11 +51,14 @@ android {
     if (isRunningOnTravis) {
         // configure keystore
         signingConfigs.release.storeFile = file("../keystore.jks")
-        signingConfigs.release.storePassword = System.getenv("keystore_password")
-        signingConfigs.release.keyAlias = System.getenv("keystore_alias")
-        signingConfigs.release.keyPassword = System.getenv("keystore_alias_password")
+        signingConfigs.release.storePassword = System.getenv("KEYSTORE_PASSWORD")
+        signingConfigs.release.keyAlias = System.getenv("KEYSTORE_ALIAS")
+        signingConfigs.release.keyPassword = System.getenv("KEYSTORE_ALIAS_PASSWORD")
     }
 
+    buildFeatures {
+        dataBinding true
+    }
     buildTypes {
         release {
             minifyEnabled false
@@ -88,14 +96,26 @@ android {
             dimension "map"
             // load api keys from ~/.gradle/gradle.properties
             manifestPlaceholders = [spotify_api_key: System.env.AndroidAutoIdrive_SpotifyApiKey ? System.env.AndroidAutoIdrive_SpotifyApiKey : AndroidAutoIdrive_SpotifyApiKey,
-                                    gmaps_api_key: AndroidAutoIdrive_GmapsApiKey]
+                                    gmaps_api_key: System.env.AndroidAutoIdrive_GmapsApiKey ? System.env.AndroidAutoIdrive_GmapsApiKey : AndroidAutoIdrive_GmapsApiKey]
         }
     }
     compileOptions {
         sourceCompatibility = 1.8
         targetCompatibility = 1.8
     }
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
 
+    def assertGit = tasks.create(name: "assertGitVersionRelease") { doLast {
+        throw new GradleException("Could not load git versionCode for release build, make sure the project is cloned from git")
+    }}
+    applicationVariants.all { variant ->
+        if (!variant.buildType.isDebuggable() && variant.mergedFlavor.versionCode == 1) {
+            def assembleTaskName = "assemble${variant.name.capitalize()}"
+            tasks[assembleTaskName].dependsOn(assertGit)
+        }
+    }
 }
 
 // What files to extract from the source APK files
@@ -130,6 +150,12 @@ def RHMISources = [
                 "basecore/rhmi/common/images.zip": "basecoreOnlineServices/rhmi/common/images.zip",
                 "basecore/rhmi/common/texts.zip": "basecoreOnlineServices/rhmi/common/texts.zip",
 
+                // bmwone (id5+ notifications)
+                "bmwone/bmwone.p7b": "bmwone/rhmi/bmw/bmwone.p7b",
+                "bmwone/rhmi/ui_description_ID5.xml": "bmwone/rhmi/ui_description.xml",
+                "bmwone/rhmi/common/images.zip": "bmwone/rhmi/common/images.zip",
+                "bmwone/rhmi/common/bmwone_widgetdb.zip": "bmwone/rhmi/common/widgetdb.zip",
+
                 // Smartthings UI layout
                 // SmartThings <= v2.3.1 uses OnlineServices v2, >= v2.3.6 uses v3
                 "basecore/rhmi/onlineservices/id5/v2/ui_description.xml": "smartthings/rhmi/ui_description.xml",
@@ -150,6 +176,7 @@ def RHMISources = [
         "MINI": [
                 "basecore/basecore.p7b": "basecoreOnlineServices/rhmi/mini/basecoreOnlineServices.p7b",
                 "basecore/rhmi/mini/images.zip": "basecoreOnlineServices/rhmi/mini/images.zip",
+                "bmwone/bmwone.p7b": "bmwone/rhmi/mini/bmwone.p7b",
         ],
         "Smartthings": [
                 "com.smartthings.android/com.smartthings.android.p7b": "smartthings/smartthings.p7b",
@@ -239,18 +266,25 @@ task extractRHMI(type: Copy) {
 }
 
 // Also the unit tests rely on some files, extract those too
+def RHMIClassicSourcesTest = [
+        // these files are only in the Classic app
+        "news/rhmi/ui_description.xml": "ui_description_news.xml",
+]
 def RHMISourcesTest = [
         "basecore/rhmi/multimedia/id5/v2/ui_description.xml": "ui_description_multimedia_v2.xml",
         "basecore/rhmi/multimedia/id5/v3/ui_description.xml": "ui_description_multimedia_v3.xml",
         "basecore/rhmi/onlineservices/id5/v1/ui_description.xml": "ui_description_onlineservices_v1.xml",
         "basecore/rhmi/onlineservices/id5/v2/ui_description.xml": "ui_description_onlineservices_v2.xml",
+        "bmwone/rhmi/ui_description_ID5.xml": "ui_description_bmwone.xml",
 ]
 task extractRHMITest(type: Copy) {
     description "Extracts necessary RHMI resources for unit tests"
 
     def destRoot = "src/test/resources"
     def connectedFound = new FileNameByRegexFinder().getFileNames(file("../external").toString(), /(?i)connected.*\.apk/)
+    def connectedClassicFound = new FileNameByRegexFinder().getFileNames(file("../external").toString(), /(?i)connected.*\.apk/)
     connectedFound.removeAll {it.toLowerCase().contains("classic")}
+    connectedClassicFound.retainAll {it.toLowerCase().contains("classic")}
 
     def missing = RHMISourcesTest.values().findAll {
         !file("$destRoot/$it").exists()
@@ -258,6 +292,12 @@ task extractRHMITest(type: Copy) {
     if (!missing.isEmpty()) {
         if (connectedFound.isEmpty()) {
             throw new StopExecutionException("Could not locate Connected APK to extract test resources from")
+        }
+        RHMIClassicSourcesTest.each { sourceFile ->
+            from({zipTree(connectedClassicFound[0])}) {
+                include "assets/carapplications/${sourceFile.key}"
+                eachFile { it.relativePath = new RelativePath(true, sourceFile.value)}
+            }
         }
         RHMISourcesTest.each { sourceFile ->
             from({zipTree(connectedFound[0])}) {
@@ -332,29 +372,38 @@ dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
     implementation "org.jetbrains.kotlin:kotlin-reflect:$kotlin_version"
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.1.1'
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.1.1'
-    implementation 'com.android.support:appcompat-v7:28.0.0'
-    implementation 'com.android.support:support-v4:28.0.0'
-    implementation 'com.android.support:design:28.0.0'
-    implementation 'com.android.support.constraint:constraint-layout:1.1.3'
-    implementation 'android.arch.lifecycle:extensions:1.1.1'
-    implementation 'android.arch.lifecycle:viewmodel:1.1.1'
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:$kotlin_coroutines_version"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$kotlin_coroutines_version"
+    implementation 'androidx.appcompat:appcompat:1.2.0'
+    implementation 'androidx.legacy:legacy-support-v4:1.0.0'
+    implementation 'com.google.android:flexbox:2.0.1'
+    implementation 'com.google.android.material:material:1.2.1'
+    implementation 'androidx.constraintlayout:constraintlayout:2.0.4'
+    implementation "androidx.lifecycle:lifecycle-extensions:$androidx_lifecycle_extensions_version"
+    implementation "androidx.lifecycle:lifecycle-viewmodel-ktx:$androidx_lifecycle_extensions_version"
+    implementation 'androidx.recyclerview:recyclerview:1.1.0'
     implementation 'com.github.wax911:android-emojify:1.5.3'
     implementation project(path: ':spotify-app-remote')
-    implementation "com.google.code.gson:gson:2.8.5"
-    implementation "com.fasterxml.jackson.core:jackson-databind:2.0.1"
+    implementation "com.google.code.gson:gson:2.8.6"
     implementation "com.google.openlocationcode:openlocationcode:1.0.4"
     implementation "ar.com.hjg:pngj:2.1.0"
+    implementation "androidx.navigation:navigation-dynamic-features-fragment:$androidx_navigation_version"
+    implementation "androidx.navigation:navigation-fragment-ktx:$androidx_navigation_version"
+    implementation "androidx.navigation:navigation-ui-ktx:$androidx_navigation_version"
+    implementation 'net.openid:appauth:0.7.1'
+    implementation "androidx.browser:browser:1.3.0"
+    implementation ('com.adamratzman:spotify-api-kotlin-android:3.5.02') {
+        exclude group: 'org.jetbrains.kotlinx', module: 'kotlinx-coroutines-core'
+    }
 
     testImplementation 'junit:junit:4.12'
-    androidTestImplementation 'com.android.support.test:runner:1.0.2'
-    androidTestImplementation 'com.android.support.test.espresso:espresso-core:3.0.2'
-    testImplementation "org.mockito:mockito-core:2.23.4"
+    androidTestImplementation 'androidx.test.ext:junit:1.1.2'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.3.0'
+    testImplementation "androidx.arch.core:core-testing:2.1.0"
+    testImplementation "org.mockito:mockito-core:3.4.4"
     testImplementation 'com.nhaarman:mockito-kotlin:1.6.0'
     testImplementation 'org.awaitility:awaitility-scala:3.1.5'
-    testImplementation 'org.json:json:20180813'
-    androidTestImplementation "org.mockito:mockito-android:2.18.3"
+    androidTestImplementation "org.mockito:mockito-android:3.4.4"
     androidTestImplementation 'com.nhaarman:mockito-kotlin:1.6.0'
     androidTestImplementation 'org.awaitility:awaitility-scala:3.1.5'
     implementation project(path: ':IDriveConnectKitAndroid')
@@ -363,16 +412,17 @@ dependencies {
     androidTestImplementation project(path: ':IDriveConnectKitAndroid')
     androidTestImplementation project(path: ':IDriveConnectKit')
     androidTestImplementation "org.bouncycastle:bcmail-jdk16:1.46"
+    testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:$kotlin_coroutines_version"
+    testImplementation "org.powermock:powermock-core:2.0.9"
+    testImplementation "org.powermock:powermock-api-mockito2:2.0.9"
+    testImplementation "org.powermock:powermock-module-junit4:2.0.9"
 
     implementation 'com.luckycatlabs:SunriseSunsetCalculator:1.2'
-    gmapImplementation 'com.google.android.gms:play-services-maps:16.0.0'
-    gmapImplementation 'com.google.android.gms:play-services-location:16.0.0'
-    gmapImplementation 'com.google.android.libraries.places:places:1.1.0'
-    gmapImplementation 'com.android.support:cardview-v7:28.0.0'
-    gmapImplementation 'com.android.support:recyclerview-v7:28.0.0'
+    gmapImplementation 'com.google.android.gms:play-services-maps:17.0.0'
+    gmapImplementation 'com.google.android.gms:play-services-location:17.1.0'
+    gmapImplementation 'com.google.android.libraries.places:places:2.4.0'
     gmapImplementation 'com.google.maps:google-maps-services:0.1.20'
 
     sentryImplementation 'io.sentry:sentry-android:1.7.16'
     sentryImplementation 'org.slf4j:slf4j-nop:1.7.25'
 }
-

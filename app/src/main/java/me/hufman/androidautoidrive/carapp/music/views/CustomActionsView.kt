@@ -1,6 +1,6 @@
 package me.hufman.androidautoidrive.carapp.music.views
 
-import me.hufman.androidautoidrive.GraphicsHelpers
+import me.hufman.androidautoidrive.utils.GraphicsHelpers
 import me.hufman.androidautoidrive.UnicodeCleaner
 import me.hufman.androidautoidrive.carapp.RHMIActionAbort
 import me.hufman.androidautoidrive.carapp.RHMIListAdapter
@@ -36,6 +36,11 @@ class CustomActionsView(val state: RHMIState, val graphicsHelpers: GraphicsHelpe
 	}
 
 	fun initWidgets(playbackView: PlaybackView) {
+		state.focusCallback = FocusCallback { focused ->
+			if (focused) {
+				show()
+			}
+		}
 		state.getTextModel()?.asRaDataModel()?.value = L.MUSIC_CUSTOMACTIONS_TITLE
 		listComponent.asList()?.getAction()?.asRAAction()?.rhmiActionCallback = RHMIActionListCallback { index ->
 			val action = actionList.getOrNull(index)
